@@ -20,6 +20,12 @@ A CLI tool to bootstrap new ESP32-S3-CAM projects with a standardized structure,
 - [x] Created new WifiBleService library for BLE WiFi configuration
 - [x] Copied optional libraries (AWSAuth, Camera)
 - [x] Comprehensive .gitignore excludes certificates and secrets
+- [x] Fixed CDK IoT certificate creation (uses `cdk-iot-core-certificates-v3` package)
+- [x] Fixed SDLogger API usage in main.cpp template (singleton pattern, LOG_I/LOG_IF macros)
+- [x] Fixed OTABleService to not depend on project-specific version.h
+- [x] Fixed WifiBleService to include WiFi.h
+- [x] Simplified directory structure (removed nested project name under embedded/)
+- [x] Made .py scripts executable in generated projects
 
 ### Future Enhancements
 - [ ] Update sandboxsite to filter `internal: true` projects from dropdown
@@ -42,41 +48,33 @@ A CLI tool to bootstrap new ESP32-S3-CAM projects with a standardized structure,
 ├── infra/                       # AWS CDK infrastructure
 │   ├── bin/infra.ts             # CDK app entry point
 │   ├── lib/
-│   │   └── iot-device-stack.ts  # IoT Thing + certificates
+│   │   └── iot-device-stack.ts  # IoT Thing + certificates (uses cdk-iot-core-certificates-v3)
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── cdk.json
 │
-├── certs/                       # Local HTTPS certificates
-│   ├── generate_certs.sh        # Generate CA-signed certs
-│   ├── new_server_cert.sh       # Add new server cert
-│   ├── s3sync.sh                # Sync certs to S3
-│   └── trust-ca.sh              # macOS keychain trust
-│
 ├── githooks/                    # Git hooks
 │   └── pre-commit               # README TOC auto-update
 │
-└── embedded/
-    └── <project-name>/          # Main application (bootloader downloaded from S3)
-        ├── src/main.cpp         # Minimal working example
-        ├── include/
-        │   ├── version.h
-        │   ├── secrets.h.template
-        │   └── README
-        ├── lib/                 # Core libraries (always included)
-        │   ├── SDLogger/
-        │   ├── WifiConnect/
-        │   ├── OTAUpdate/
-        │   └── OTABleService/
-        ├── scripts/
-        │   ├── factory_setup.sh
-        │   ├── build_and_flash.sh
-        │   ├── build_and_upload.py
-        │   └── generate_secrets.py
-        ├── platformio.ini
-        ├── partitions.csv
-        ├── AmazonRootCA1.pem
-        └── .gitignore
+└── embedded/                    # PlatformIO project
+    ├── src/main.cpp             # Minimal working example
+    ├── include/
+    │   ├── version.h
+    │   └── secrets.h            # Generated from SSM
+    ├── lib/                     # Libraries
+    │   ├── SDLogger/
+    │   ├── WifiConnect/
+    │   ├── WifiBleService/
+    │   ├── OTAUpdate/
+    │   └── OTABleService/
+    ├── scripts/
+    │   ├── factory_setup.sh
+    │   ├── build_and_flash.sh
+    │   ├── build_and_upload.py
+    │   └── generate_secrets.py
+    ├── platformio.ini
+    ├── partitions.csv
+    └── .gitignore
 ```
 
 ## Key Components
@@ -84,7 +82,7 @@ A CLI tool to bootstrap new ESP32-S3-CAM projects with a standardized structure,
 ### 1. README.md with Auto-TOC
 - Skeleton README with sections for the user to fill in
 - Git pre-commit hook to auto-update table of contents
-- **Decision needed:** Use `markdown-toc` npm package or custom script?
+- Uses `markdown-toc` npm package (same as nakom.is project)
 
 ### 2. .gitignore
 Combines patterns for:
@@ -110,12 +108,14 @@ Pre-filled with:
 - Reference to sandboxsite
 
 ### 4. Infra (CDK)
-Based on bootboots/infra/lib/iot-device.ts:
-- Creates IoT Thing with auto-generated certificate
-- Saves cert/key to SSM Parameter Store
+Uses `cdk-iot-core-certificates-v3` package for IoT certificate creation:
+- Creates IoT Thing with auto-generated certificate via Custom Resource Lambda
+- Saves cert/key to SSM Parameter Store (captured at creation time)
 - Creates IAM role for credentials provider
 - Creates IoT policy for MQTT (connect, subscribe, publish)
 - Role alias for temporary credentials
+
+**Note:** The Lambda function is necessary because AWS IoT only returns the certificate PEM and private key at creation time. The Custom Resource captures these values and stores them in SSM.
 
 **Naming convention:**
 - Thing: `<ProjectName>Thing`
@@ -184,19 +184,7 @@ This allows users to configure WiFi via the sandboxsite Bluetooth page without n
 
 **Implementation:** Interactive prompt during bootstrap asking which optional libraries to include.
 
-### 8. Certificate Management
-
-Based on csotp/certs:
-- EC (prime256v1) certificates for efficiency on embedded
-- 10-year validity
-- CA certificate for local signing
-- generate_certs.sh creates full PKI
-- new_server_cert.sh adds device certs
-- s3sync.sh syncs to S3 bucket
-- trust-ca.sh adds CA to macOS keychain
-- Generates server_certs.h for embedding
-
-### 9. Bootloader (Separate Repo)
+### 8. Bootloader (Separate Repo)
 
 **Repository:** `nakomis/esp32-bootloader` (https://github.com/nakomis/esp32-bootloader)
 
@@ -211,7 +199,7 @@ The bootloader is:
 - Marked as `internal: true` in S3 metadata (hidden from sandboxsite dropdown)
 - Supports ESP32-S3 (16MB) and original ESP32-CAM (4MB)
 
-### 10. Partition Table (16MB Flash)
+### 9. Partition Table (16MB Flash)
 
 | Name | Type | Offset | Size |
 |------|------|--------|------|
@@ -261,9 +249,8 @@ Require `AWS_PROFILE=nakom.is-sandbox` for:
 - Stretch goal: Rename bucket to something more generic
 
 ### 8. Optional Features (Interactive Selection)
-- AWSAuth library
-- Camera library
-- Certificate management scripts (from csotp)
+- AWSAuth library (SigV4 signing + credentials provider)
+- Camera library (ESP32-S3-CAM capture with PSRAM)
 
 ### 9. Bootloader
 **Decision:** Separate git repo with S3-hosted firmware
@@ -355,16 +342,18 @@ s3://nakomis-firmware-updates/
 - Certificate management via .gitignore (excludes *.pem, *.key, *.crt, secrets.h)
 - Full PKI scripts can be added later if needed
 
-## Files to Create in esp32-bootstrap
+## Files in esp32-bootstrap
 
 ```
 esp32-bootstrap/
 ├── esp32-bootstrap              # Main CLI script (Python, executable)
+├── requirements.txt             # Python dependencies (questionary)
 ├── templates/                   # Template files with placeholders
 │   ├── README.md.template
 │   ├── CLAUDE.md.template
 │   ├── gitignore.template
 │   ├── tool-versions.template
+│   ├── claude-settings.json.template
 │   ├── infra/
 │   │   ├── bin/infra.ts.template
 │   │   ├── lib/iot-device-stack.ts.template
@@ -372,32 +361,33 @@ esp32-bootstrap/
 │   │   ├── tsconfig.json
 │   │   └── cdk.json
 │   ├── embedded/
-│   │   └── app/                 # Main application template
+│   │   └── app/
 │   │       ├── src/main.cpp.template
 │   │       ├── include/
-│   │       │   ├── version.h.template
-│   │       │   └── secrets.h.template
+│   │       │   └── version.h.template
 │   │       ├── platformio.ini.template
 │   │       ├── partitions.csv
 │   │       └── gitignore.template
 │   ├── scripts/
-│   │   ├── factory_setup.sh.template   # Downloads bootloader from S3
+│   │   ├── factory_setup.sh.template
 │   │   ├── build_and_flash.sh.template
 │   │   ├── build_and_upload.py.template
 │   │   └── generate_secrets.py.template
+│   ├── project-scripts/
+│   │   └── install-hooks.sh.template
 │   └── githooks/
 │       └── pre-commit.template
 ├── libraries/                   # Library source code
 │   ├── core/                    # Always included
 │   │   ├── SDLogger/
 │   │   ├── WifiConnect/
-│   │   ├── WifiBleService/      # NEW: BLE WiFi configuration
+│   │   ├── WifiBleService/
 │   │   ├── OTAUpdate/
 │   │   └── OTABleService/
 │   └── optional/                # User-selected
 │       ├── AWSAuth/
 │       └── Camera/
-└── README.md                    # Documentation for the bootstrap tool itself
+└── README.md                    # Documentation for the bootstrap tool
 ```
 
 ## Usage
@@ -412,6 +402,32 @@ python esp32-bootstrap my-project
 # Create a new project (non-interactive, defaults only)
 python esp32-bootstrap my-project --no-interactive
 ```
+
+## Technical Notes
+
+### SDLogger Usage
+The SDLogger library uses a singleton pattern. Correct usage:
+```cpp
+#include "SDLogger.h"
+
+// Initialize
+bool success = SDLogger::getInstance().init("/logs");
+
+// Log using macros (not methods)
+LOG_I("Info message");
+LOG_IF("Formatted: %s %d", str, num);
+LOG_E("Error message");
+```
+
+### CDK IoT Certificates
+AWS IoT only provides the certificate PEM and private key at creation time - they cannot be retrieved later. The `cdk-iot-core-certificates-v3` package uses a Custom Resource Lambda to:
+1. Create the IoT Thing and certificate via AWS SDK
+2. Capture the PEM/private key from the creation response
+3. Store them in SSM Parameter Store
+4. Return the ARNs to CloudFormation
+
+### OTABleService Version
+The OTABleService library defaults to version "0.0.0" and must be set via `setVersion()` from the main application (which has access to version.h).
 
 ---
 *Last updated: 2026-02-03*
