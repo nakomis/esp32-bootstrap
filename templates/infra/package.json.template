@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "aws-cdk-lib": "^2.170.0",
-    "cdk-iot-core-certificates-v3": "^3.0.0",
+    "cdk-iot-core-certificates-v3": "^0.0.14",
     "constructs": "^10.4.0"
   }
 }
