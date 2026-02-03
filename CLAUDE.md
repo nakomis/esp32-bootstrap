@@ -137,7 +137,7 @@ Based on bootboots/infra/lib/iot-device.ts:
 - Version bumping (major/minor/patch)
 - PlatformIO build
 - S3 upload with metadata
-- **S3 bucket:** `bootboots-firmware-updates` (shared)
+- **S3 bucket:** `nakomis-firmware-updates` (shared)
 - **S3 key:** `<ProjectName>/<version>/firmware.bin`
 
 #### generate_secrets.py
@@ -251,7 +251,7 @@ Require `AWS_PROFILE=nakom.is-sandbox` for:
 - Stretch goal: Make UUIDs/configs discoverable in web UI
 
 ### 7. S3 Bucket
-**Decision:** Use shared `bootboots-firmware-updates` bucket
+**Decision:** Use shared `nakomis-firmware-updates` bucket
 - Stretch goal: Rename bucket to something more generic
 
 ### 8. Optional Features (Interactive Selection)
@@ -274,7 +274,7 @@ Require `AWS_PROFILE=nakom.is-sandbox` for:
 ### 2. S3 Bootloader Structure
 **Decision:** Confirmed structure:
 ```
-s3://bootboots-firmware-updates/
+s3://nakomis-firmware-updates/
 ├── Bootloader/
 │   ├── latest/firmware.bin      # Symlink/copy of newest version
 │   └── <version>/firmware.bin
