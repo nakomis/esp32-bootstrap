@@ -1,7 +1,6 @@
 #include "OTABleService.h"
 #include "OTAUpdate.h"
 #include "WifiConnect.h"
-#include "version.h"
 
 static const char* TAG = "OTA_BLE";
 
@@ -11,7 +10,7 @@ OTABleService::OTABleService()
     , _pStatusChar(nullptr)
     , _otaUpdate(nullptr)
     , _wifi(nullptr)
-    , _versionString(FIRMWARE_VERSION)
+    , _versionString("0.0.0")
     , _hasPendingCommand(false)
     , _pendingLength(0)
     , _urlLength(0)

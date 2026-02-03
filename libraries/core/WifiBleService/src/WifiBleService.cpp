@@ -1,5 +1,6 @@
 #include "WifiBleService.h"
 #include "WifiConnect.h"
+#include <WiFi.h>
 
 static const char* TAG = "WIFI_BLE";
 
