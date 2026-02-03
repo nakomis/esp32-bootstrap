@@ -44,25 +44,24 @@ The project name should be in kebab-case (lowercase with hyphens). It will be co
 ├── githooks/
 │   └── pre-commit               # README TOC auto-update
 │
-└── embedded/
-    └── <project-name>/
-        ├── src/main.cpp
-        ├── include/
-        │   ├── version.h
-        │   └── secrets.h        # Generated from SSM
-        ├── lib/                  # Libraries
-        │   ├── SDLogger/
-        │   ├── WifiConnect/
-        │   ├── WifiBleService/
-        │   ├── OTAUpdate/
-        │   └── OTABleService/
-        ├── scripts/
-        │   ├── factory_setup.sh
-        │   ├── build_and_flash.sh
-        │   ├── build_and_upload.py
-        │   └── generate_secrets.py
-        ├── platformio.ini
-        └── partitions.csv
+└── embedded/                    # PlatformIO project
+    ├── src/main.cpp
+    ├── include/
+    │   ├── version.h
+    │   └── secrets.h            # Generated from SSM
+    ├── lib/                      # Libraries
+    │   ├── SDLogger/
+    │   ├── WifiConnect/
+    │   ├── WifiBleService/
+    │   ├── OTAUpdate/
+    │   └── OTABleService/
+    ├── scripts/
+    │   ├── factory_setup.sh
+    │   ├── build_and_flash.sh
+    │   ├── build_and_upload.py
+    │   └── generate_secrets.py
+    ├── platformio.ini
+    └── partitions.csv
 ```
 
 ## Core Libraries
@@ -93,7 +92,7 @@ cd my-project
 cd infra && npm install && cdk deploy
 
 # Generate secrets from SSM
-cd ../embedded/my-project/scripts
+cd ../embedded/scripts
 python generate_secrets.py
 
 # Flash device

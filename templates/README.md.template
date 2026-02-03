@@ -42,7 +42,7 @@
 
 2. **Generate Secrets:**
    ```bash
-   cd embedded/{{ PROJECT_NAME }}/scripts
+   cd embedded/scripts
    python generate_secrets.py
    ```
 
@@ -56,7 +56,7 @@
 ### Build & Flash
 
 ```bash
-cd embedded/{{ PROJECT_NAME }}/scripts
+cd embedded/scripts
 ./build_and_flash.sh
 ```
 
@@ -82,11 +82,10 @@ Updates are delivered via the [sandboxsite](https://sandbox.nakomis.com):
 ```
 {{ PROJECT_NAME }}/
 ├── infra/                 # AWS CDK infrastructure
-├── embedded/
-│   └── {{ PROJECT_NAME }}/  # PlatformIO project
-│       ├── src/           # Application code
-│       ├── lib/           # Libraries
-│       └── scripts/       # Build & deploy scripts
+├── embedded/              # PlatformIO project
+│   ├── src/               # Application code
+│   ├── lib/               # Libraries
+│   └── scripts/           # Build & deploy scripts
 └── README.md
 ```
 

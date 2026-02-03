@@ -175,7 +175,7 @@ def create_project(project_name: str, options: dict):
     (project_dir / 'githooks').mkdir()
     (project_dir / 'infra' / 'bin').mkdir(parents=True)
     (project_dir / 'infra' / 'lib').mkdir(parents=True)
-    embedded_dir = project_dir / 'embedded' / kebab_name
+    embedded_dir = project_dir / 'embedded'
     (embedded_dir / 'src').mkdir(parents=True)
     (embedded_dir / 'include').mkdir()
     (embedded_dir / 'scripts').mkdir()
@@ -242,31 +242,31 @@ def create_project(project_name: str, options: dict):
         # src/main.cpp
         for template_file in (embedded_templates / 'src').glob('*.template'):
             copy_template(template_file, embedded_dir / 'src', replacements)
-            print(f"  Created: embedded/{kebab_name}/src/{template_file.stem}")
+            print(f"  Created: embedded/src/{template_file.stem}")
 
         # include/*.h
         for template_file in (embedded_templates / 'include').glob('*.template'):
             copy_template(template_file, embedded_dir / 'include', replacements)
-            print(f"  Created: embedded/{kebab_name}/include/{template_file.stem}")
+            print(f"  Created: embedded/include/{template_file.stem}")
 
         # platformio.ini
         pio_template = embedded_templates / 'platformio.ini.template'
         if pio_template.exists():
             copy_template(pio_template, embedded_dir, replacements)
-            print(f"  Created: embedded/{kebab_name}/platformio.ini")
+            print(f"  Created: embedded/platformio.ini")
 
         # partitions.csv
         partitions_file = embedded_templates / 'partitions.csv'
         if partitions_file.exists():
             shutil.copy2(partitions_file, embedded_dir / 'partitions.csv')
-            print(f"  Created: embedded/{kebab_name}/partitions.csv")
+            print(f"  Created: embedded/partitions.csv")
 
         # Embedded .gitignore
         embedded_gitignore = embedded_templates / 'gitignore.template'
         if embedded_gitignore.exists():
             content = embedded_gitignore.read_text()
             (embedded_dir / '.gitignore').write_text(content)
-            print(f"  Created: embedded/{kebab_name}/.gitignore")
+            print(f"  Created: embedded/.gitignore")
 
     # Scripts templates
     print("\nSetting up scripts...")
@@ -277,7 +277,7 @@ def create_project(project_name: str, options: dict):
             # Make scripts executable
             if dst_file.suffix in ['.sh', '.py', '']:
                 dst_file.chmod(dst_file.stat().st_mode | 0o111)
-            print(f"  Created: embedded/{kebab_name}/scripts/{dst_file.name}")
+            print(f"  Created: embedded/scripts/{dst_file.name}")
 
     # Project-level scripts
     project_scripts_templates = TEMPLATES_DIR / 'project-scripts'
@@ -353,7 +353,7 @@ def create_project(project_name: str, options: dict):
     print(f"  1. cd {kebab_name}")
     print(f"  2. cd infra && npm install")
     print(f"  3. cdk deploy  # Creates IoT Thing + certificates")
-    print(f"  4. cd ../embedded/{kebab_name}/scripts")
+    print(f"  4. cd ../embedded/scripts")
     print(f"  5. python generate_secrets.py  # Fetches certs from SSM")
     print(f"  6. ./factory_setup.sh  # Flash bootloader + app")
     print()
