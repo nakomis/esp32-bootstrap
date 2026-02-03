@@ -1,0 +1,47 @@
+#!/bin/bash
+set -e
+
+if [ -z "$1" ]; then
+    echo "Usage: $0 <name>"
+    echo "Example: $0 laptop"
+    echo ""
+    echo "Creates a new client certificate signed by the project CA."
+    echo "Output includes a combined .pem file for use with Python/curl."
+    exit 1
+fi
+
+NAME="$1"
+CERTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$CERTS_DIR"
+
+# Check CA exists
+if [ ! -f ca.key ] || [ ! -f ca.crt ]; then
+    echo "Error: CA certificate not found. Run generate_certs.sh first."
+    exit 1
+fi
+
+# Configuration (matching generate_certs.sh)
+DAYS_VALID=3650
+EC_CURVE="prime256v1"
+COUNTRY="US"
+STATE="State"
+CITY="City"
+ORG="{{ PROJECT_NAME_PASCAL }}"
+
+echo "=== Generating Client Certificate for '$NAME' ==="
+
+openssl ecparam -name $EC_CURVE -genkey -noout -out "${NAME}.key"
+openssl req -new -key "${NAME}.key" -out "${NAME}.csr" \
+    -subj "/C=$COUNTRY/ST=$STATE/L=$CITY/O=$ORG/CN=${NAME}"
+openssl x509 -req -days $DAYS_VALID -in "${NAME}.csr" -CA ca.crt -CAkey ca.key \
+    -CAcreateserial -out "${NAME}.crt"
+
+# Create combined PEM for Python/curl
+cat "${NAME}.crt" "${NAME}.key" > "${NAME}.pem"
+
+# Clean up CSR
+rm -f "${NAME}.csr" *.srl
+
+echo ""
+echo "=== Done ==="
+echo "Created: ${NAME}.key, ${NAME}.crt, ${NAME}.pem"

@@ -1,0 +1,17 @@
+# Certificate private keys (NEVER commit these)
+*.key
+*.pem
+
+# CA serial file
+*.srl
+
+# Certificate signing requests
+*.csr
+
+# Generated C header (contains private key)
+server_certs.h
+
+# Keep certificate files (.crt) - they are public
+# !ca.crt
+# !server.crt
+# !client.crt

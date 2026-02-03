@@ -1,0 +1,20 @@
+#!/bin/bash
+set -e
+
+CERTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ ! -f "$CERTS_DIR/ca.crt" ]; then
+    echo "Error: CA certificate not found. Run generate_certs.sh first."
+    exit 1
+fi
+
+echo "Adding CA certificate to macOS system keychain..."
+echo "You may be prompted for your password."
+echo ""
+
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CERTS_DIR/ca.crt"
+
+echo ""
+echo "=== Done ==="
+echo "The {{ PROJECT_NAME_PASCAL }} CA is now trusted by your system."
+echo "Browsers and curl will accept certificates signed by this CA."

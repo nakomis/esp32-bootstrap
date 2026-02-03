@@ -29,7 +29,7 @@ A CLI tool to bootstrap new ESP32-S3-CAM projects with a standardized structure,
 
 ### Future Enhancements
 - [x] Update sandboxsite to filter `internal: true` projects from dropdown (already implemented)
-- [ ] Add certificate management scripts (from csotp)
+- [x] Add certificate management scripts (from csotp)
 
 ## Project Structure to Generate
 
@@ -55,6 +55,12 @@ A CLI tool to bootstrap new ESP32-S3-CAM projects with a standardized structure,
 │
 ├── githooks/                    # Git hooks
 │   └── pre-commit               # README TOC auto-update
+│
+├── certs/                       # Certificate management (optional)
+│   ├── generate_certs.sh        # Generate CA + server/client certs
+│   ├── new_server_cert.sh       # Add device-specific server cert
+│   ├── new_client_cert.sh       # Add client cert
+│   └── trust-ca.sh              # Add CA to macOS keychain
 │
 └── embedded/                    # PlatformIO project
     ├── src/main.cpp             # Minimal working example
@@ -184,7 +190,36 @@ This allows users to configure WiFi via the sandboxsite Bluetooth page without n
 
 **Implementation:** Interactive prompt during bootstrap asking which optional libraries to include.
 
-### 8. Bootloader (Separate Repo)
+### 8. Certificate Management (Optional)
+
+EC (prime256v1) certificates for TLS on ESP32. Scripts are included if selected during bootstrap.
+
+| Script | Purpose |
+|--------|---------|
+| generate_certs.sh | Create CA + initial server/client certificates |
+| new_server_cert.sh | Add device-specific server certificate |
+| new_client_cert.sh | Add client certificate for external systems |
+| trust-ca.sh | Add CA to macOS system keychain |
+
+**Certificate properties:**
+- Algorithm: EC prime256v1 (fast, small, well-supported)
+- Validity: 10 years (3650 days)
+- Output: PEM files + `server_certs.h` for ESP32 embedding
+
+**Usage:**
+```bash
+cd certs
+./generate_certs.sh              # Create CA and initial certs
+./new_server_cert.sh mydevice    # Add cert for mydevice.local
+./trust-ca.sh                    # Trust CA on macOS
+```
+
+The generated `server_certs.h` is copied to `embedded/include/` and contains:
+- `server_cert[]` - Server certificate (PROGMEM)
+- `server_key[]` - Server private key (PROGMEM)
+- `ca_cert[]` - CA certificate for client verification (PROGMEM)
+
+### 10. Bootloader (Separate Repo)
 
 **Repository:** `nakomis/esp32-bootloader` (https://github.com/nakomis/esp32-bootloader)
 
@@ -199,7 +234,7 @@ The bootloader is:
 - Marked as `internal: true` in S3 metadata (hidden from sandboxsite dropdown)
 - Supports ESP32-S3 (16MB) and original ESP32-CAM (4MB)
 
-### 9. Partition Table (16MB Flash)
+### 11. Partition Table (16MB Flash)
 
 | Name | Type | Offset | Size |
 |------|------|--------|------|
@@ -375,8 +410,14 @@ esp32-bootstrap/
 │   │   └── generate_secrets.py.template
 │   ├── project-scripts/
 │   │   └── install-hooks.sh.template
-│   └── githooks/
-│       └── pre-commit.template
+│   ├── githooks/
+│   │   └── pre-commit.template
+│   └── certs/
+│       ├── generate_certs.sh.template
+│       ├── new_server_cert.sh.template
+│       ├── new_client_cert.sh.template
+│       ├── trust-ca.sh.template
+│       └── gitignore.template
 ├── libraries/                   # Library source code
 │   ├── core/                    # Always included
 │   │   ├── SDLogger/
@@ -428,6 +469,28 @@ AWS IoT only provides the certificate PEM and private key at creation time - the
 
 ### OTABleService Version
 The OTABleService library defaults to version "0.0.0" and must be set via `setVersion()` from the main application (which has access to version.h).
+
+### Certificate Usage in ESP32
+When using the generated `server_certs.h`, parse certificates with mbedTLS:
+```cpp
+#include "server_certs.h"
+#include <mbedtls/x509_crt.h>
+#include <mbedtls/pk.h>
+
+mbedtls_x509_crt srvcert;
+mbedtls_pk_context pkey;
+
+// Parse server certificate
+mbedtls_x509_crt_parse(&srvcert,
+    (const unsigned char*)server_cert, strlen(server_cert) + 1);
+
+// Parse private key
+mbedtls_pk_parse_key(&pkey,
+    (const unsigned char*)server_key, strlen(server_key) + 1,
+    NULL, 0, mbedtls_ctr_drbg_random, &ctr_drbg);
+```
+
+The `PROGMEM` attribute stores certificates in flash memory rather than RAM.
 
 ---
 *Last updated: 2026-02-03*
