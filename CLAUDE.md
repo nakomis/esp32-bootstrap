@@ -28,7 +28,7 @@ A CLI tool to bootstrap new ESP32-S3-CAM projects with a standardized structure,
 - [x] Made .py scripts executable in generated projects
 
 ### Future Enhancements
-- [ ] Update sandboxsite to filter `internal: true` projects from dropdown
+- [x] Update sandboxsite to filter `internal: true` projects from dropdown (already implemented)
 - [ ] Add certificate management scripts (from csotp)
 
 ## Project Structure to Generate
