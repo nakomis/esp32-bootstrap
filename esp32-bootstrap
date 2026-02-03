@@ -274,8 +274,8 @@ def create_project(project_name: str, options: dict):
     if scripts_templates.exists():
         for template_file in scripts_templates.glob('*.template'):
             dst_file = copy_template(template_file, embedded_dir / 'scripts', replacements)
-            # Make shell scripts executable
-            if dst_file.suffix == '.sh' or dst_file.suffix == '':
+            # Make scripts executable
+            if dst_file.suffix in ['.sh', '.py', '']:
                 dst_file.chmod(dst_file.stat().st_mode | 0o111)
             print(f"  Created: embedded/{kebab_name}/scripts/{dst_file.name}")
 
@@ -284,7 +284,7 @@ def create_project(project_name: str, options: dict):
     if project_scripts_templates.exists():
         for template_file in project_scripts_templates.glob('*.template'):
             dst_file = copy_template(template_file, project_dir / 'scripts', replacements)
-            if dst_file.suffix == '.sh' or dst_file.suffix == '':
+            if dst_file.suffix in ['.sh', '.py', '']:
                 dst_file.chmod(dst_file.stat().st_mode | 0o111)
             print(f"  Created: scripts/{dst_file.name}")
 
