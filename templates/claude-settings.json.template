@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pio run*)",
+      "Bash(pio device*)",
+      "Bash(python *build_and_upload.py*)",
+      "Bash(python *generate_secrets.py*)",
+      "Bash(*factory_setup.sh*)",
+      "Bash(*build_and_flash.sh*)",
+      "Bash(cdk *)",
+      "Bash(npm install*)",
+      "Bash(git *)"
+    ]
+  }
+}

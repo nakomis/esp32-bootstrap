@@ -1,0 +1,179 @@
+#!/bin/bash
+#
+# {{ PROJECT_NAME_PASCAL }} - Factory Setup Script
+# Downloads bootloader from S3, builds main app, and flashes both
+#
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+S3_BUCKET="nakomis-firmware-updates"
+BOOTLOADER_PROJECT="Bootloader"
+PROJECT_NAME="{{ PROJECT_NAME_PASCAL }}"
+
+# Find script directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  {{ PROJECT_NAME_PASCAL }} - Factory Setup${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo ""
+
+# Check prerequisites
+echo -e "${BLUE}Checking prerequisites...${NC}"
+
+if ! command -v pio &> /dev/null; then
+    echo -e "${RED}Error: PlatformIO not found${NC}"
+    echo "Install with: pip install platformio"
+    exit 1
+fi
+echo "  PlatformIO: OK"
+
+if ! command -v aws &> /dev/null; then
+    echo -e "${RED}Error: AWS CLI not found${NC}"
+    echo "Install from: https://aws.amazon.com/cli/"
+    exit 1
+fi
+echo "  AWS CLI: OK"
+
+if ! command -v esptool.py &> /dev/null; then
+    echo -e "${RED}Error: esptool.py not found${NC}"
+    echo "Install with: pip install esptool"
+    exit 1
+fi
+echo "  esptool.py: OK"
+
+# Check AWS profile
+if [ -z "$AWS_PROFILE" ]; then
+    echo -e "${YELLOW}Warning: AWS_PROFILE not set${NC}"
+    read -p "Enter AWS profile name: " AWS_PROFILE
+    export AWS_PROFILE
+fi
+echo "  AWS Profile: $AWS_PROFILE"
+
+echo ""
+
+# Detect USB port
+echo -e "${BLUE}Detecting USB port...${NC}"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    PORT=$(ls /dev/cu.usbserial-* /dev/cu.SLAB_USBtoUART* /dev/cu.wchusbserial* 2>/dev/null | head -1)
+else
+    PORT=$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -1)
+fi
+
+if [ -z "$PORT" ]; then
+    echo -e "${RED}Error: No USB serial port detected${NC}"
+    echo "Make sure the device is connected."
+    exit 1
+fi
+echo -e "  Found device on ${GREEN}$PORT${NC}"
+echo ""
+
+# Create temp directory for bootloader
+TEMP_DIR=$(mktemp -d)
+trap "rm -rf $TEMP_DIR" EXIT
+
+# Download bootloader from S3
+echo -e "${BLUE}Downloading bootloader from S3...${NC}"
+
+# Get latest version from manifest
+MANIFEST_URL="s3://$S3_BUCKET/$BOOTLOADER_PROJECT/manifest.json"
+aws s3 cp "$MANIFEST_URL" "$TEMP_DIR/manifest.json" --quiet
+
+# Extract latest version
+BOOTLOADER_VERSION=$(python3 -c "
+import json
+with open('$TEMP_DIR/manifest.json') as f:
+    manifest = json.load(f)
+versions = manifest.get('versions', [])
+if versions:
+    # Sort by version and get latest
+    versions.sort(key=lambda v: [int(x) for x in v['version'].split('.')], reverse=True)
+    print(versions[0]['version'])
+")
+
+if [ -z "$BOOTLOADER_VERSION" ]; then
+    echo -e "${RED}Error: Could not determine bootloader version${NC}"
+    exit 1
+fi
+
+echo "  Latest bootloader version: $BOOTLOADER_VERSION"
+
+# Download bootloader firmware
+BOOTLOADER_KEY="$BOOTLOADER_PROJECT/$BOOTLOADER_VERSION/firmware.bin"
+BOOTLOADER_FILE="$TEMP_DIR/bootloader.bin"
+aws s3 cp "s3://$S3_BUCKET/$BOOTLOADER_KEY" "$BOOTLOADER_FILE" --quiet
+
+BOOTLOADER_SIZE=$(stat -f%z "$BOOTLOADER_FILE" 2>/dev/null || stat -c%s "$BOOTLOADER_FILE")
+echo "  Downloaded: $BOOTLOADER_SIZE bytes"
+echo ""
+
+# Build main application
+echo -e "${BLUE}Building main application...${NC}"
+cd "$PROJECT_ROOT"
+pio run -e esp32s3_n16r8
+
+APP_FILE="$PROJECT_ROOT/.pio/build/esp32s3_n16r8/firmware.bin"
+if [ ! -f "$APP_FILE" ]; then
+    echo -e "${RED}Error: Build failed - firmware.bin not found${NC}"
+    exit 1
+fi
+
+APP_SIZE=$(stat -f%z "$APP_FILE" 2>/dev/null || stat -c%s "$APP_FILE")
+echo "  Built: $APP_SIZE bytes"
+echo ""
+
+# Get bootloader.bin (ESP32 second-stage bootloader) and partition table
+BOOTLOADER_2ND="$PROJECT_ROOT/.pio/build/esp32s3_n16r8/bootloader.bin"
+PARTITIONS="$PROJECT_ROOT/.pio/build/esp32s3_n16r8/partitions.bin"
+
+# Flash everything
+echo -e "${BLUE}Flashing to device...${NC}"
+echo "  Port: $PORT"
+echo ""
+
+# Erase flash first
+echo -e "${YELLOW}Erasing flash...${NC}"
+esptool.py --chip esp32s3 --port "$PORT" erase_flash
+
+echo ""
+echo -e "${YELLOW}Flashing bootloader, partitions, factory app, and main app...${NC}"
+
+# Flash:
+# - 0x0000: ESP32 second-stage bootloader
+# - 0x8000: Partition table
+# - 0xe000: OTA data (erased)
+# - 0x10000: Factory partition (Nakomis bootloader)
+# - 0x110000: OTA_0 partition (main app)
+
+esptool.py --chip esp32s3 --port "$PORT" --baud 921600 \
+    write_flash --flash_mode dio --flash_freq 80m --flash_size 16MB \
+    0x0000 "$BOOTLOADER_2ND" \
+    0x8000 "$PARTITIONS" \
+    0x10000 "$BOOTLOADER_FILE" \
+    0x110000 "$APP_FILE"
+
+echo ""
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  Factory Setup Complete!${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo ""
+echo "Flashed:"
+echo "  - ESP32 bootloader: 0x0000"
+echo "  - Partition table: 0x8000"
+echo "  - Factory (Nakomis bootloader v$BOOTLOADER_VERSION): 0x10000"
+echo "  - OTA_0 (main app): 0x110000"
+echo ""
+echo "The device will now boot into the main application."
+echo "OTA updates will be handled by the factory bootloader."
+echo ""
+echo "Opening serial monitor (Ctrl+C to exit)..."
+pio device monitor --port "$PORT" --baud 115200

@@ -1,0 +1,22 @@
+#!/bin/bash
+#
+# Pre-commit hook for {{ PROJECT_NAME_PASCAL }}
+# Updates table of contents in README.md
+#
+
+# Check if README.md is being committed
+if git diff --cached --name-only | grep -q "README.md"; then
+    echo "--- Updating Table of Contents in README.md ---"
+
+    # Check if markdown-toc is installed
+    if command -v markdown-toc &> /dev/null; then
+        markdown-toc -i README.md
+        git add README.md
+    elif command -v npx &> /dev/null; then
+        npx markdown-toc -i README.md
+        git add README.md
+    else
+        echo "Warning: markdown-toc not found, skipping TOC update"
+        echo "Install with: npm install -g markdown-toc"
+    fi
+fi

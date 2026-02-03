@@ -1,0 +1,95 @@
+# {{ PROJECT_NAME_PASCAL }}
+
+<!-- toc -->
+<!-- tocstop -->
+
+## Overview
+
+*TODO: Describe your project here.*
+
+## Hardware
+
+- **Board:** ESP32-S3-WROOM N16R8 CAM
+- **Flash:** 16MB
+- **PSRAM:** 8MB
+- **Camera:** OV5640 (if applicable)
+
+## Pin Mapping
+
+| Function | GPIO | Notes |
+|----------|------|-------|
+| SD Card CLK | 39 | |
+| SD Card CMD | 38 | |
+| SD Card D0 | 40 | |
+| *Add more pins...* | | |
+
+## Getting Started
+
+### Prerequisites
+
+- [PlatformIO](https://platformio.org/install)
+- [AWS CLI](https://aws.amazon.com/cli/) configured with `nakom.is-sandbox` profile
+- [Node.js](https://nodejs.org/) for CDK
+
+### Initial Setup
+
+1. **Deploy AWS Infrastructure:**
+   ```bash
+   cd infra
+   npm install
+   cdk deploy
+   ```
+
+2. **Generate Secrets:**
+   ```bash
+   cd embedded/{{ PROJECT_NAME }}/scripts
+   python generate_secrets.py
+   ```
+
+3. **Factory Flash:**
+   ```bash
+   ./factory_setup.sh
+   ```
+
+## Development
+
+### Build & Flash
+
+```bash
+cd embedded/{{ PROJECT_NAME }}/scripts
+./build_and_flash.sh
+```
+
+### Upload to S3 (OTA)
+
+```bash
+python build_and_upload.py           # Patch version bump
+python build_and_upload.py --minor   # Minor version bump
+```
+
+## OTA Updates
+
+Updates are delivered via the [sandboxsite](https://sandbox.nakomis.com):
+
+1. Connect to device via Bluetooth
+2. Configure WiFi if needed
+3. Select firmware version and trigger update
+4. Device downloads firmware, writes to SD, reboots
+5. Bootloader flashes update from SD to OTA partition
+
+## Project Structure
+
+```
+{{ PROJECT_NAME }}/
+├── infra/                 # AWS CDK infrastructure
+├── embedded/
+│   └── {{ PROJECT_NAME }}/  # PlatformIO project
+│       ├── src/           # Application code
+│       ├── lib/           # Libraries
+│       └── scripts/       # Build & deploy scripts
+└── README.md
+```
+
+## License
+
+*TODO: Add license information.*

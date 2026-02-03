@@ -1,0 +1,141 @@
+# {{ PROJECT_NAME_PASCAL }} - Claude Code Context
+
+## Project Overview
+
+*TODO: Describe your project's purpose and functionality.*
+
+**Hardware:** ESP32-S3-WROOM N16R8 CAM (16MB Flash, 8MB PSRAM)
+
+## Related Projects
+
+- **Sandboxsite:** https://github.com/nakomis/sandboxsite - Web UI for BLE + OTA updates
+- **ESP32 Bootloader:** https://github.com/nakomis/esp32-bootloader - Factory partition bootloader
+- **Firmware Bucket:** `s3://nakomis-firmware-updates/{{ PROJECT_NAME_PASCAL }}/`
+
+## Pin Mapping
+
+| Function | GPIO | Notes |
+|----------|------|-------|
+| SD Card CLK | 39 | 4-bit SDMMC mode |
+| SD Card CMD | 38 | |
+| SD Card D0 | 40 | |
+| SD Card D1 | 41 | |
+| SD Card D2 | 42 | |
+| SD Card D3 | 1 | Active low for card detect |
+| Camera SIOD | 4 | I2C SDA |
+| Camera SIOC | 5 | I2C SCL |
+| Camera VSYNC | 6 | |
+| Camera HREF | 7 | |
+| Camera PCLK | 13 | |
+| Camera XCLK | 15 | |
+| Camera D0-D7 | 11,9,8,10,12,18,17,16 | |
+| Camera PWDN | - | Not connected |
+| Camera RESET | - | Not connected |
+
+## Build Commands
+
+```bash
+# Development build & flash
+cd embedded/{{ PROJECT_NAME }}/scripts
+./build_and_flash.sh
+
+# Factory setup (bootloader + app)
+./factory_setup.sh
+
+# Upload to S3 for OTA
+python build_and_upload.py              # Patch bump
+python build_and_upload.py --minor      # Minor bump
+python build_and_upload.py --major      # Major bump
+python build_and_upload.py --no-bump    # Keep current version
+python build_and_upload.py --build-only # Build without upload
+
+# Generate secrets.h from AWS SSM
+python generate_secrets.py
+```
+
+## Libraries
+
+### Core Libraries (Always Included)
+
+| Library | Purpose |
+|---------|---------|
+| SDLogger | Async SD card logging with FreeRTOS task |
+| WifiConnect | WiFi management with NVS credential storage |
+| WifiBleService | BLE WiFi configuration (save SSID/password via BLE) |
+| OTAUpdate | Download firmware from HTTPS URL to SD card |
+| OTABleService | BLE service for OTA updates (sandboxsite compatible) |
+
+### BLE Services
+
+All projects use standardized UUIDs for sandboxsite compatibility:
+
+```cpp
+#define NAKOMIS_ESP32_SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define NAKOMIS_ESP32_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+```
+
+**BLE Commands (JSON):**
+```json
+// WiFi Configuration
+{"command":"wifi_config","ssid":"...","password":"..."}
+{"command":"wifi_connect"}
+{"command":"wifi_status"}
+
+// OTA Update
+{"command":"ota_update","url":"https://..."}
+{"command":"ota_status"}
+```
+
+## OTA Update Flow
+
+1. User connects via sandboxsite Bluetooth page
+2. User configures WiFi via BLE (if needed)
+3. User selects firmware version in sandboxsite
+4. Sandboxsite sends OTA command with signed S3 URL
+5. Device shuts down BLE to free memory
+6. Device downloads firmware to `/firmware_update.bin` on SD card
+7. Device reboots
+8. Bootloader detects update file, flashes to OTA partition
+9. Bootloader deletes update file, boots main app
+
+## AWS Infrastructure
+
+**IoT Thing:** `{{ PROJECT_NAME_PASCAL }}Thing`
+**SSM Parameters:**
+- `/{{ PROJECT_NAME_PASCAL }}/{{ PROJECT_NAME_PASCAL }}Thing/certPem`
+- `/{{ PROJECT_NAME_PASCAL }}/{{ PROJECT_NAME_PASCAL }}Thing/privKey`
+
+**S3 Firmware Path:** `s3://nakomis-firmware-updates/{{ PROJECT_NAME_PASCAL }}/<version>/firmware.bin`
+
+## Partition Table (16MB Flash)
+
+| Name | Type | Offset | Size |
+|------|------|--------|------|
+| nvs | data | 0x9000 | 20KB |
+| otadata | data | 0xe000 | 8KB |
+| factory | app | 0x10000 | 1MB |
+| ota_0 | app | 0x110000 | 7MB |
+| spiffs | data | 0x810000 | 7.875MB |
+| coredump | data | 0xFF0000 | 64KB |
+
+## Coding Guidelines
+
+- Use Arduino framework (not ESP-IDF directly)
+- Prefer async patterns with FreeRTOS tasks
+- Log to SD card using SDLogger for debugging
+- Keep BLE responses under 512 bytes
+- Always shut down BLE before OTA download (memory constraint)
+
+## Common Issues
+
+### SD Card Timeout During OTA
+Call `SDLogger::flush()` before starting OTA download to ensure SD card mutex is released.
+
+### WiFi Won't Connect
+Check NVS storage - credentials may be corrupted. Use `wifi_config` BLE command to re-save.
+
+### BLE Not Advertising
+Ensure device name is set before starting BLE:
+```cpp
+BLEDevice::init("{{ PROJECT_NAME_PASCAL }}");
+```

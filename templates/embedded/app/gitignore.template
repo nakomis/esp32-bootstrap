@@ -1,0 +1,25 @@
+# Embedded Project .gitignore
+
+# Secrets - NEVER commit!
+include/secrets.h
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.clang_complete
+.gcc-flags.json
+
+# Build artifacts
+*.bin
+*.elf
+*.hex
+*.map
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# macOS
+.DS_Store

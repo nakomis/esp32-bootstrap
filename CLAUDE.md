@@ -6,7 +6,7 @@ A CLI tool to bootstrap new ESP32-S3-CAM projects with a standardized structure,
 **Command:** `esp32-bootstrap <project-name>`
 
 ## Status
-**Phase: In Progress** - Building the bootstrap CLI tool
+**Phase: Complete** - CLI tool is ready for use
 
 ### Completed
 - [x] Created `nakomis/esp32-bootloader` repo with generic bootloader
@@ -14,10 +14,16 @@ A CLI tool to bootstrap new ESP32-S3-CAM projects with a standardized structure,
 - [x] Bootloader build_and_upload.py with `internal: true` metadata
 - [x] Standardized NAKOMIS_ESP32 BLE UUIDs across all projects
 - [x] OTA flow verified end-to-end (BLE → WiFi → S3 → SD → Bootloader)
+- [x] Built esp32-bootstrap CLI tool with interactive prompts
+- [x] Created all project templates
+- [x] Copied core libraries (SDLogger, WifiConnect, OTAUpdate, OTABleService)
+- [x] Created new WifiBleService library for BLE WiFi configuration
+- [x] Copied optional libraries (AWSAuth, Camera)
+- [x] Comprehensive .gitignore excludes certificates and secrets
 
-### In Progress
-- [ ] Build the esp32-bootstrap CLI tool
+### Future Enhancements
 - [ ] Update sandboxsite to filter `internal: true` projects from dropdown
+- [ ] Add certificate management scripts (from csotp)
 
 ## Project Structure to Generate
 
@@ -305,49 +311,49 @@ s3://nakomis-firmware-updates/
 ### 4. Bootloader Caching
 **Decision:** Always fetch fresh from S3
 
-## Implementation Plan
+## Implementation Plan (Completed)
 
-### Phase 1: Project Structure
+### Phase 1: Project Structure ✓
 1. Create bootstrap script (Python)
 2. Set up template directory structure
 3. Implement project name substitution
 
-### Phase 2: Core Files
+### Phase 2: Core Files ✓
 1. README.md template
 2. CLAUDE.md template
 3. .gitignore
 4. .tool-versions
 
-### Phase 3: Embedded Setup
+### Phase 3: Embedded Setup ✓
 1. Copy/template platformio.ini files
 2. Copy partition tables
 3. Set up bootloader project
 4. Set up main app skeleton
-5. Copy core libraries (SDLogger, WifiConnect, OTAUpdate, OTABleService)
+5. Copy core libraries (SDLogger, WifiConnect, OTAUpdate, OTABleService, WifiBleService)
 
-### Phase 4: Scripts
+### Phase 4: Scripts ✓
 1. factory_setup.sh (template with project name)
 2. build_and_flash.sh (template)
 3. build_and_upload.py (template with S3 bucket, project name)
 4. generate_secrets.py (template with SSM paths)
 
-### Phase 5: Infrastructure
+### Phase 5: Infrastructure ✓
 1. CDK project structure
 2. iot-device-stack.ts template
 3. package.json with dependencies
 
-### Phase 6: Optional Features
+### Phase 6: Optional Features ✓
 1. Interactive prompt for optional libraries
 2. Copy AWSAuth if selected
 3. Copy Camera if selected
 
-### Phase 7: Git Hooks
+### Phase 7: Git Hooks ✓
 1. Pre-commit hook for TOC update
 2. install-hooks.sh script
 
-### Phase 8: Certificates (Maybe)
-1. Copy cert scripts from csotp
-2. Adapt for new project
+### Phase 8: Certificates (Deferred)
+- Certificate management via .gitignore (excludes *.pem, *.key, *.crt, secrets.h)
+- Full PKI scripts can be added later if needed
 
 ## Files to Create in esp32-bootstrap
 
@@ -394,11 +400,18 @@ esp32-bootstrap/
 └── README.md                    # Documentation for the bootstrap tool itself
 ```
 
-## Next Steps
+## Usage
 
-1. Discuss and finalize the plan
-2. Clarify any open questions
-3. Begin implementation phase by phase
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Create a new project (interactive)
+python esp32-bootstrap my-project
+
+# Create a new project (non-interactive, defaults only)
+python esp32-bootstrap my-project --no-interactive
+```
 
 ---
 *Last updated: 2026-02-03*

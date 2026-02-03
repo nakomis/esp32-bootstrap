@@ -1,0 +1,2 @@
+# Dependencies for esp32-bootstrap CLI tool
+questionary>=2.0.0

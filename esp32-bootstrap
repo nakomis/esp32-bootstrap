@@ -1,0 +1,455 @@
+#!/usr/bin/env python3
+"""
+ESP32 Bootstrap CLI Tool
+
+Creates a new ESP32-S3 project with standardized structure including:
+- PlatformIO configuration for ESP32-S3-N16R8
+- Core libraries (SDLogger, WifiConnect, OTAUpdate, OTABleService)
+- AWS CDK infrastructure for IoT Thing + certificates
+- Build and deployment scripts
+- OTA update support via sandboxsite
+
+Usage:
+    esp32-bootstrap <project-name>
+
+Example:
+    esp32-bootstrap my-sensor-project
+"""
+
+import os
+import sys
+import re
+import shutil
+import argparse
+from pathlib import Path
+
+try:
+    import questionary
+    from questionary import Style
+except ImportError:
+    print("Error: questionary is required. Install with: pip install questionary")
+    sys.exit(1)
+
+
+# Custom style for prompts
+custom_style = Style([
+    ('qmark', 'fg:cyan bold'),
+    ('question', 'fg:white bold'),
+    ('answer', 'fg:green bold'),
+    ('pointer', 'fg:cyan bold'),
+    ('highlighted', 'fg:cyan bold'),
+    ('selected', 'fg:green'),
+])
+
+# Get the directory where this script lives (for finding templates)
+SCRIPT_DIR = Path(__file__).parent.resolve()
+TEMPLATES_DIR = SCRIPT_DIR / "templates"
+LIBRARIES_DIR = SCRIPT_DIR / "libraries"
+
+
+def to_pascal_case(name: str) -> str:
+    """Convert kebab-case or snake_case to PascalCase."""
+    # Split on hyphens and underscores
+    parts = re.split(r'[-_]', name)
+    # Capitalize each part and join
+    return ''.join(part.capitalize() for part in parts)
+
+
+def to_kebab_case(name: str) -> str:
+    """Ensure name is in kebab-case (lowercase with hyphens)."""
+    # Replace underscores with hyphens
+    name = name.replace('_', '-')
+    # Insert hyphens before uppercase letters and lowercase everything
+    name = re.sub(r'([a-z])([A-Z])', r'\1-\2', name)
+    return name.lower()
+
+
+def validate_project_name(name: str) -> bool:
+    """Validate project name format."""
+    if not name:
+        return False
+    # Must start with letter, can contain letters, numbers, hyphens
+    if not re.match(r'^[a-zA-Z][a-zA-Z0-9-]*$', name):
+        return False
+    # No consecutive hyphens
+    if '--' in name:
+        return False
+    return True
+
+
+def substitute_placeholders(content: str, replacements: dict) -> str:
+    """Replace placeholders in template content."""
+    for key, value in replacements.items():
+        content = content.replace(f'{{{{ {key} }}}}', value)
+        content = content.replace(f'{{{{{key}}}}}', value)  # No spaces
+    return content
+
+
+def copy_template(src: Path, dst: Path, replacements: dict, rename_map: dict = None):
+    """Copy a template file, substituting placeholders."""
+    if rename_map is None:
+        rename_map = {}
+
+    # Determine destination filename
+    dst_name = rename_map.get(src.name, src.name)
+    # Remove .template suffix if present
+    if dst_name.endswith('.template'):
+        dst_name = dst_name[:-9]
+
+    dst_file = dst / dst_name
+
+    # Read, substitute, and write
+    content = src.read_text()
+    content = substitute_placeholders(content, replacements)
+    dst_file.write_text(content)
+
+    # Preserve executable bit
+    if os.access(src, os.X_OK):
+        dst_file.chmod(dst_file.stat().st_mode | 0o111)
+
+    return dst_file
+
+
+def copy_directory(src: Path, dst: Path, replacements: dict = None):
+    """Copy a directory, optionally substituting placeholders in files."""
+    if replacements is None:
+        replacements = {}
+
+    dst.mkdir(parents=True, exist_ok=True)
+
+    for item in src.iterdir():
+        if item.name.startswith('.'):
+            continue
+
+        dst_item = dst / item.name
+
+        if item.is_dir():
+            copy_directory(item, dst_item, replacements)
+        else:
+            if replacements and item.suffix in ['.cpp', '.h', '.py', '.sh', '.ts', '.json', '.md', '.ini', '.csv']:
+                # Template file - substitute placeholders
+                content = item.read_text()
+                content = substitute_placeholders(content, replacements)
+                dst_item.write_text(content)
+            else:
+                # Binary or non-template file - copy directly
+                shutil.copy2(item, dst_item)
+
+            # Preserve executable bit
+            if os.access(item, os.X_OK):
+                dst_item.chmod(dst_item.stat().st_mode | 0o111)
+
+
+def create_project(project_name: str, options: dict):
+    """Create the project structure."""
+
+    # Normalize names
+    kebab_name = to_kebab_case(project_name)
+    pascal_name = to_pascal_case(project_name)
+
+    # Project directory
+    project_dir = Path.cwd() / kebab_name
+
+    if project_dir.exists():
+        print(f"Error: Directory '{kebab_name}' already exists")
+        sys.exit(1)
+
+    print(f"\nCreating project: {kebab_name}")
+    print(f"  PascalCase name: {pascal_name}")
+    print(f"  Directory: {project_dir}")
+    print()
+
+    # Replacements for templates
+    replacements = {
+        'PROJECT_NAME': kebab_name,
+        'PROJECT_NAME_PASCAL': pascal_name,
+        'PROJECT_NAME_UPPER': kebab_name.upper().replace('-', '_'),
+    }
+
+    # Create main directory
+    project_dir.mkdir(parents=True)
+
+    # Create subdirectories
+    (project_dir / '.claude').mkdir()
+    (project_dir / 'scripts').mkdir()
+    (project_dir / 'githooks').mkdir()
+    (project_dir / 'infra' / 'bin').mkdir(parents=True)
+    (project_dir / 'infra' / 'lib').mkdir(parents=True)
+    embedded_dir = project_dir / 'embedded' / kebab_name
+    (embedded_dir / 'src').mkdir(parents=True)
+    (embedded_dir / 'include').mkdir()
+    (embedded_dir / 'scripts').mkdir()
+    (embedded_dir / 'lib').mkdir()
+
+    # Copy templates
+    print("Copying templates...")
+
+    # Root level templates
+    for template_file in TEMPLATES_DIR.glob('*.template'):
+        copy_template(template_file, project_dir, replacements)
+        print(f"  Created: {template_file.stem}")
+
+    # Special handling for gitignore (can't name file .gitignore in templates)
+    gitignore_template = TEMPLATES_DIR / 'gitignore.template'
+    if gitignore_template.exists():
+        content = gitignore_template.read_text()
+        content = substitute_placeholders(content, replacements)
+        (project_dir / '.gitignore').write_text(content)
+        print("  Created: .gitignore")
+
+    # .tool-versions
+    tool_versions_template = TEMPLATES_DIR / 'tool-versions.template'
+    if tool_versions_template.exists():
+        content = tool_versions_template.read_text()
+        (project_dir / '.tool-versions').write_text(content)
+        print("  Created: .tool-versions")
+
+    # .claude/settings.local.json
+    claude_settings_template = TEMPLATES_DIR / 'claude-settings.json.template'
+    if claude_settings_template.exists():
+        content = claude_settings_template.read_text()
+        content = substitute_placeholders(content, replacements)
+        (project_dir / '.claude' / 'settings.local.json').write_text(content)
+        print("  Created: .claude/settings.local.json")
+
+    # Infra templates
+    print("\nSetting up infrastructure...")
+    infra_templates = TEMPLATES_DIR / 'infra'
+    if infra_templates.exists():
+        for template_file in (infra_templates / 'bin').glob('*.template'):
+            copy_template(template_file, project_dir / 'infra' / 'bin', replacements)
+            print(f"  Created: infra/bin/{template_file.stem}")
+
+        for template_file in (infra_templates / 'lib').glob('*.template'):
+            copy_template(template_file, project_dir / 'infra' / 'lib', replacements)
+            print(f"  Created: infra/lib/{template_file.stem}")
+
+        # Non-template infra files (tsconfig.json, cdk.json)
+        for static_file in infra_templates.glob('*.json'):
+            shutil.copy2(static_file, project_dir / 'infra' / static_file.name)
+            print(f"  Created: infra/{static_file.name}")
+
+        # package.json template
+        pkg_template = infra_templates / 'package.json.template'
+        if pkg_template.exists():
+            copy_template(pkg_template, project_dir / 'infra', replacements)
+            print("  Created: infra/package.json")
+
+    # Embedded templates
+    print("\nSetting up embedded project...")
+    embedded_templates = TEMPLATES_DIR / 'embedded' / 'app'
+    if embedded_templates.exists():
+        # src/main.cpp
+        for template_file in (embedded_templates / 'src').glob('*.template'):
+            copy_template(template_file, embedded_dir / 'src', replacements)
+            print(f"  Created: embedded/{kebab_name}/src/{template_file.stem}")
+
+        # include/*.h
+        for template_file in (embedded_templates / 'include').glob('*.template'):
+            copy_template(template_file, embedded_dir / 'include', replacements)
+            print(f"  Created: embedded/{kebab_name}/include/{template_file.stem}")
+
+        # platformio.ini
+        pio_template = embedded_templates / 'platformio.ini.template'
+        if pio_template.exists():
+            copy_template(pio_template, embedded_dir, replacements)
+            print(f"  Created: embedded/{kebab_name}/platformio.ini")
+
+        # partitions.csv
+        partitions_file = embedded_templates / 'partitions.csv'
+        if partitions_file.exists():
+            shutil.copy2(partitions_file, embedded_dir / 'partitions.csv')
+            print(f"  Created: embedded/{kebab_name}/partitions.csv")
+
+        # Embedded .gitignore
+        embedded_gitignore = embedded_templates / 'gitignore.template'
+        if embedded_gitignore.exists():
+            content = embedded_gitignore.read_text()
+            (embedded_dir / '.gitignore').write_text(content)
+            print(f"  Created: embedded/{kebab_name}/.gitignore")
+
+    # Scripts templates
+    print("\nSetting up scripts...")
+    scripts_templates = TEMPLATES_DIR / 'scripts'
+    if scripts_templates.exists():
+        for template_file in scripts_templates.glob('*.template'):
+            dst_file = copy_template(template_file, embedded_dir / 'scripts', replacements)
+            # Make shell scripts executable
+            if dst_file.suffix == '.sh' or dst_file.suffix == '':
+                dst_file.chmod(dst_file.stat().st_mode | 0o111)
+            print(f"  Created: embedded/{kebab_name}/scripts/{dst_file.name}")
+
+    # Project-level scripts
+    project_scripts_templates = TEMPLATES_DIR / 'project-scripts'
+    if project_scripts_templates.exists():
+        for template_file in project_scripts_templates.glob('*.template'):
+            dst_file = copy_template(template_file, project_dir / 'scripts', replacements)
+            if dst_file.suffix == '.sh' or dst_file.suffix == '':
+                dst_file.chmod(dst_file.stat().st_mode | 0o111)
+            print(f"  Created: scripts/{dst_file.name}")
+
+    # Git hooks
+    print("\nSetting up git hooks...")
+    hooks_templates = TEMPLATES_DIR / 'githooks'
+    if hooks_templates.exists():
+        for template_file in hooks_templates.glob('*.template'):
+            dst_file = copy_template(template_file, project_dir / 'githooks', replacements)
+            dst_file.chmod(dst_file.stat().st_mode | 0o111)
+            print(f"  Created: githooks/{dst_file.name}")
+
+    # Copy core libraries
+    print("\nCopying core libraries...")
+    core_libs = LIBRARIES_DIR / 'core'
+    if core_libs.exists():
+        for lib_dir in core_libs.iterdir():
+            if lib_dir.is_dir() and not lib_dir.name.startswith('.'):
+                dst_lib = embedded_dir / 'lib' / lib_dir.name
+                copy_directory(lib_dir, dst_lib, replacements)
+                print(f"  Copied: {lib_dir.name}")
+
+    # Copy optional libraries based on selection
+    if options.get('aws_auth'):
+        print("\nCopying AWSAuth library...")
+        aws_auth_lib = LIBRARIES_DIR / 'optional' / 'AWSAuth'
+        if aws_auth_lib.exists():
+            copy_directory(aws_auth_lib, embedded_dir / 'lib' / 'AWSAuth', replacements)
+            print("  Copied: AWSAuth")
+
+    if options.get('camera'):
+        print("\nCopying Camera library...")
+        camera_lib = LIBRARIES_DIR / 'optional' / 'Camera'
+        if camera_lib.exists():
+            copy_directory(camera_lib, embedded_dir / 'lib' / 'Camera', replacements)
+            print("  Copied: Camera")
+
+    # Copy certificates scripts if selected
+    if options.get('certificates'):
+        print("\nSetting up certificate management...")
+        certs_templates = TEMPLATES_DIR / 'certs'
+        if certs_templates.exists():
+            certs_dir = project_dir / 'certs'
+            certs_dir.mkdir(exist_ok=True)
+            for template_file in certs_templates.glob('*'):
+                if template_file.is_file():
+                    if template_file.suffix == '.template':
+                        dst_file = copy_template(template_file, certs_dir, replacements)
+                    else:
+                        shutil.copy2(template_file, certs_dir / template_file.name)
+                        dst_file = certs_dir / template_file.name
+                    if dst_file.suffix == '.sh':
+                        dst_file.chmod(dst_file.stat().st_mode | 0o111)
+                    print(f"  Created: certs/{dst_file.name}")
+
+    # Initialize git repository
+    print("\nInitializing git repository...")
+    os.system(f'cd "{project_dir}" && git init -q')
+    print("  Initialized git repository")
+
+    # Print next steps
+    print("\n" + "=" * 60)
+    print(f"Project '{kebab_name}' created successfully!")
+    print("=" * 60)
+    print("\nNext steps:")
+    print(f"  1. cd {kebab_name}")
+    print(f"  2. cd infra && npm install")
+    print(f"  3. cdk deploy  # Creates IoT Thing + certificates")
+    print(f"  4. cd ../embedded/{kebab_name}/scripts")
+    print(f"  5. python generate_secrets.py  # Fetches certs from SSM")
+    print(f"  6. ./factory_setup.sh  # Flash bootloader + app")
+    print()
+    print("Documentation:")
+    print(f"  - Project docs: {kebab_name}/README.md")
+    print(f"  - Claude context: {kebab_name}/CLAUDE.md")
+    print()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Bootstrap a new ESP32-S3 project with standardized structure',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  esp32-bootstrap my-sensor
+  esp32-bootstrap garden-monitor
+  esp32-bootstrap pet-feeder
+
+The project name should be in kebab-case (lowercase with hyphens).
+It will be converted to PascalCase for AWS/CDK identifiers.
+        '''
+    )
+    parser.add_argument('project_name', nargs='?', help='Name of the project (kebab-case)')
+    parser.add_argument('--no-interactive', action='store_true', help='Skip interactive prompts, use defaults')
+
+    args = parser.parse_args()
+
+    # Get project name
+    if args.project_name:
+        project_name = args.project_name
+    else:
+        project_name = questionary.text(
+            "Project name (kebab-case):",
+            validate=lambda x: validate_project_name(x) or "Invalid name. Use letters, numbers, and hyphens. Must start with a letter.",
+            style=custom_style
+        ).ask()
+
+        if not project_name:
+            print("Cancelled.")
+            sys.exit(0)
+
+    # Validate project name
+    if not validate_project_name(project_name):
+        print(f"Error: Invalid project name '{project_name}'")
+        print("Project name must start with a letter and contain only letters, numbers, and hyphens.")
+        sys.exit(1)
+
+    # Interactive options
+    options = {
+        'aws_auth': False,
+        'camera': False,
+        'certificates': False,
+    }
+
+    if not args.no_interactive:
+        print()
+        print("Optional features:")
+
+        options['aws_auth'] = questionary.confirm(
+            "Include AWSAuth library (SigV4 signing, credentials provider)?",
+            default=False,
+            style=custom_style
+        ).ask()
+
+        options['camera'] = questionary.confirm(
+            "Include Camera library (ESP32-S3-CAM with OV5640)?",
+            default=False,
+            style=custom_style
+        ).ask()
+
+        options['certificates'] = questionary.confirm(
+            "Include certificate management scripts?",
+            default=False,
+            style=custom_style
+        ).ask()
+
+        # Confirm
+        print()
+        kebab_name = to_kebab_case(project_name)
+        pascal_name = to_pascal_case(project_name)
+
+        print(f"Project: {kebab_name} ({pascal_name})")
+        print(f"Optional features:")
+        print(f"  - AWSAuth: {'Yes' if options['aws_auth'] else 'No'}")
+        print(f"  - Camera: {'Yes' if options['camera'] else 'No'}")
+        print(f"  - Certificates: {'Yes' if options['certificates'] else 'No'}")
+        print()
+
+        if not questionary.confirm("Create project?", default=True, style=custom_style).ask():
+            print("Cancelled.")
+            sys.exit(0)
+
+    # Create the project
+    create_project(project_name, options)
+
+
+if __name__ == '__main__':
+    main()

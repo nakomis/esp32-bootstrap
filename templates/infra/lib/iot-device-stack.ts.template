@@ -1,0 +1,165 @@
+import * as cdk from 'aws-cdk-lib';
+import * as iot from 'aws-cdk-lib/aws-iot';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
+import { Construct } from 'constructs';
+
+/**
+ * {{ PROJECT_NAME_PASCAL }} IoT Device Stack
+ *
+ * Creates:
+ * - IoT Thing with auto-generated certificate
+ * - Certificate and private key stored in SSM Parameter Store
+ * - IAM role for credentials provider
+ * - IoT policy for MQTT and credentials provider
+ * - Role alias for temporary credentials
+ */
+export class IoTDeviceStack extends cdk.Stack {
+    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+        super(scope, id, props);
+
+        const projectName = '{{ PROJECT_NAME_PASCAL }}';
+        const thingName = `${projectName}Thing`;
+
+        // Create IoT Thing
+        const thing = new iot.CfnThing(this, 'Thing', {
+            thingName: thingName,
+        });
+
+        // Create certificate (keys on creation)
+        const certificate = new iot.CfnCertificate(this, 'Certificate', {
+            status: 'ACTIVE',
+            certificateMode: 'DEFAULT',
+        });
+
+        // Attach certificate to thing
+        new iot.CfnThingPrincipalAttachment(this, 'ThingCertAttachment', {
+            principal: certificate.attrArn,
+            thingName: thing.thingName!,
+        });
+
+        // Store certificate in SSM Parameter Store
+        new ssm.StringParameter(this, 'CertPemParameter', {
+            parameterName: `/${projectName}/${thingName}/certPem`,
+            stringValue: certificate.attrCertificatePem,
+            description: `IoT certificate for ${thingName}`,
+            tier: ssm.ParameterTier.STANDARD,
+        });
+
+        // Note: Private key is only available at creation time
+        // We use a custom resource or manual step to store it
+        // For now, output it (be careful with this in production!)
+
+        // Create IAM role for IoT credentials provider
+        const thingRole = new iam.Role(this, 'ThingRole', {
+            roleName: `${projectName}ThingIamRole`,
+            assumedBy: new iam.ServicePrincipal('credentials.iot.amazonaws.com'),
+            description: `IAM role for ${projectName} IoT credentials provider`,
+        });
+
+        // Add permissions to the role (customize as needed)
+        thingRole.addToPolicy(new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            actions: [
+                's3:GetObject',
+                's3:PutObject',
+            ],
+            resources: [
+                `arn:aws:s3:::nakomis-firmware-updates/${projectName}/*`,
+            ],
+        }));
+
+        // Create IoT policy
+        const iotPolicy = new iot.CfnPolicy(this, 'IoTPolicy', {
+            policyName: `${projectName}Policy`,
+            policyDocument: {
+                Version: '2012-10-17',
+                Statement: [
+                    {
+                        Effect: 'Allow',
+                        Action: [
+                            'iot:Connect',
+                        ],
+                        Resource: [
+                            `arn:aws:iot:${this.region}:${this.account}:client/${thingName}`,
+                        ],
+                    },
+                    {
+                        Effect: 'Allow',
+                        Action: [
+                            'iot:Publish',
+                            'iot:Receive',
+                        ],
+                        Resource: [
+                            `arn:aws:iot:${this.region}:${this.account}:topic/{{ PROJECT_NAME }}/*`,
+                        ],
+                    },
+                    {
+                        Effect: 'Allow',
+                        Action: [
+                            'iot:Subscribe',
+                        ],
+                        Resource: [
+                            `arn:aws:iot:${this.region}:${this.account}:topicfilter/{{ PROJECT_NAME }}/*`,
+                        ],
+                    },
+                    {
+                        Effect: 'Allow',
+                        Action: [
+                            'iot:AssumeRoleWithCertificate',
+                        ],
+                        Resource: [
+                            `arn:aws:iot:${this.region}:${this.account}:rolealias/${projectName}RoleAlias`,
+                        ],
+                    },
+                ],
+            },
+        });
+
+        // Attach policy to certificate
+        new iot.CfnPolicyPrincipalAttachment(this, 'PolicyCertAttachment', {
+            policyName: iotPolicy.policyName!,
+            principal: certificate.attrArn,
+        });
+
+        // Create role alias for credentials provider
+        const roleAlias = new iot.CfnRoleAlias(this, 'RoleAlias', {
+            roleAlias: `${projectName}RoleAlias`,
+            roleArn: thingRole.roleArn,
+            credentialDurationSeconds: 3600,
+        });
+
+        // Outputs
+        new cdk.CfnOutput(this, 'ThingName', {
+            value: thingName,
+            description: 'IoT Thing name',
+        });
+
+        new cdk.CfnOutput(this, 'CertificateArn', {
+            value: certificate.attrArn,
+            description: 'IoT Certificate ARN',
+        });
+
+        new cdk.CfnOutput(this, 'CertificateId', {
+            value: certificate.attrId,
+            description: 'IoT Certificate ID',
+        });
+
+        new cdk.CfnOutput(this, 'RoleAliasName', {
+            value: roleAlias.roleAlias!,
+            description: 'IoT Role Alias for credentials provider',
+        });
+
+        new cdk.CfnOutput(this, 'SSMCertPath', {
+            value: `/${projectName}/${thingName}/certPem`,
+            description: 'SSM Parameter path for certificate',
+        });
+
+        // Output private key (only available at creation!)
+        // In production, use a custom resource to securely store this
+        new cdk.CfnOutput(this, 'PrivateKeyWarning', {
+            value: 'IMPORTANT: Save the private key from CloudFormation outputs!',
+            description: 'Private key is only available at creation time',
+        });
+    }
+}

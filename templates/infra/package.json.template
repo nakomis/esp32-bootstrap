@@ -1,0 +1,19 @@
+{
+  "name": "{{ PROJECT_NAME }}-infra",
+  "version": "1.0.0",
+  "description": "AWS CDK infrastructure for {{ PROJECT_NAME_PASCAL }}",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "aws-cdk": "^2.170.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.4.0"
+  }
+}

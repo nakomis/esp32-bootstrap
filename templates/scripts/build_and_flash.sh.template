@@ -1,0 +1,75 @@
+#!/bin/bash
+#
+# {{ PROJECT_NAME_PASCAL }} - Build and Flash Script
+# Development workflow: build and flash to connected device
+#
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Find script directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+echo -e "${GREEN}================================${NC}"
+echo -e "${GREEN}  {{ PROJECT_NAME_PASCAL }} - Build & Flash${NC}"
+echo -e "${GREEN}================================${NC}"
+echo ""
+
+# Check for platformio
+if ! command -v pio &> /dev/null; then
+    echo -e "${RED}Error: PlatformIO not found${NC}"
+    echo "Install with: pip install platformio"
+    exit 1
+fi
+
+# Change to project directory
+cd "$PROJECT_ROOT"
+
+# Detect USB port
+echo "Detecting USB port..."
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS
+    PORT=$(ls /dev/cu.usbserial-* /dev/cu.SLAB_USBtoUART* /dev/cu.wchusbserial* 2>/dev/null | head -1)
+else
+    # Linux
+    PORT=$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -1)
+fi
+
+if [ -z "$PORT" ]; then
+    echo -e "${YELLOW}Warning: No USB serial port detected${NC}"
+    echo "Make sure the device is connected."
+    echo ""
+    echo "Continuing with build only..."
+    BUILD_ONLY=true
+else
+    echo -e "Found device on ${GREEN}$PORT${NC}"
+    BUILD_ONLY=false
+fi
+
+echo ""
+
+# Build
+echo -e "${YELLOW}Building firmware...${NC}"
+pio run -e esp32s3_n16r8
+
+if [ "$BUILD_ONLY" = false ]; then
+    echo ""
+    echo -e "${YELLOW}Flashing to device...${NC}"
+    pio run -e esp32s3_n16r8 --target upload --upload-port "$PORT"
+
+    echo ""
+    echo -e "${GREEN}Flash complete!${NC}"
+    echo ""
+    echo "Opening serial monitor (Ctrl+C to exit)..."
+    pio device monitor --port "$PORT" --baud 115200
+else
+    echo ""
+    echo -e "${GREEN}Build complete!${NC}"
+    echo "Connect device and run again to flash."
+fi
