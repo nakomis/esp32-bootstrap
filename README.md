@@ -20,6 +20,8 @@ python esp32-bootstrap my-project --no-interactive
 
 The project name should be in kebab-case (lowercase with hyphens). It will be converted to PascalCase for AWS/CDK identifiers.
 
+> **Always use the real project name.** The PascalCase name is substituted throughout generated files (`version.h`, `platformio.ini`, `generate_secrets.py`, `build_and_upload.py`, `factory_setup.sh`, `build_and_flash.sh`, `main.cpp`). Running the tool with a temporary name (e.g. `my-project-tmp`) and then copying the output requires a tedious global find-and-replace across all those files. Just run it directly into your target directory with the real name.
+
 ## Generated Project Structure
 
 ```
