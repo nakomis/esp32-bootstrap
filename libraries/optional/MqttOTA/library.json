@@ -1,0 +1,7 @@
+{
+  "name": "MqttOTA",
+  "version": "1.0.0",
+  "description": "MQTT-triggered OTA firmware updates via CommandDispatcher, with URL chunking",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}
