@@ -110,6 +110,19 @@ void initBLE() {
 void initWiFi() {
     wifi.begin();
 
+    // Seed credentials from secrets.h on first boot (if NVS is empty and secrets are non-empty)
+    if (!wifi.hasCredentials()) {
+        const char* ssid = WIFI_SSID;
+        const char* pass = WIFI_PASSWORD;
+        if (ssid && ssid[0] != '\0' && pass && pass[0] != '\0') {
+            wifi.setCredentials(ssid, pass);
+            Serial.println("Seeded WiFi credentials from secrets.h");
+        } else {
+            Serial.println("No stored WiFi credentials and secrets.h is empty — configure via BLE");
+            if (sdCardReady) LOG_I("No WiFi credentials — configure via BLE");
+        }
+    }
+
     // Try to connect with stored credentials
     if (wifi.hasCredentials()) {
         Serial.printf("Found stored WiFi credentials for '%s', attempting connection...\n", wifi.getSSID().c_str());
