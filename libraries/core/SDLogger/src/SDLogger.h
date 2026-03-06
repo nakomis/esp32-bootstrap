@@ -6,6 +6,8 @@
 #include <freertos/semphr.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <vector>
+#include <functional>
 
 enum LogLevel {
     LOG_TRACE = 0,
@@ -18,17 +20,19 @@ enum LogLevel {
 
 struct LogEntry {
     LogLevel level;
-    uint32_t timestamp;
-    char message[256];
-    bool immediate;
+    uint32_t timestamp;      // millis() when enqueued
+    char message[256];       // Log message content
+    bool immediate;          // If true, should be written immediately (critical logs)
 };
 
 class SDLogger {
 public:
     static SDLogger& getInstance();
 
+    // Initialise SD card and logger
     bool init(const char* logDir = "/logs");
 
+    // Thread-safe logging methods
     void trace(const char* message);
     void debug(const char* message);
     void info(const char* message);
@@ -36,6 +40,7 @@ public:
     void error(const char* message);
     void critical(const char* message);
 
+    // Formatted logging
     void tracef(const char* format, ...);
     void debugf(const char* format, ...);
     void infof(const char* format, ...);
@@ -43,18 +48,32 @@ public:
     void errorf(const char* format, ...);
     void criticalf(const char* format, ...);
 
+    // Generic log method
     void log(LogLevel level, const char* message);
     void logf(LogLevel level, const char* format, ...);
 
+    // File management
     void flush();
     void rotateLogs();
     bool isInitialized() const { return _initialized; }
 
+    // Async queue management
     void shutdown();
     uint32_t getDroppedCount() const { return _droppedCount; }
+    uint32_t getTotalEnqueued() const { return _totalEnqueued; }
+    uint32_t getTotalWritten() const { return _totalWritten; }
+    uint32_t getQueueDepth() const;
 
+    // Log retrieval — used for BLE/MQTT log viewing
+    String getRecentLogEntries(int maxLines = 50);
+    void processRecentLogEntries(int maxLines, std::function<void(const String&)> processor);
+    std::vector<String> listLogFiles();
+    void processLogFile(const String& filename, int maxLines, std::function<void(const String&)> processor);
+
+    // Configuration
     void setLogLevel(LogLevel minLevel) { _minLogLevel = minLevel; }
     void setMaxFileSize(size_t maxSize) { _maxFileSize = maxSize; }
+    void setMaxFiles(int maxFiles) { _maxFiles = maxFiles; }
     void setFileLoggingEnabled(bool enabled) { _fileLoggingEnabled = enabled; }
 
 private:
@@ -67,32 +86,49 @@ private:
     String _logDir = "/logs";
     String _currentLogFile;
     LogLevel _minLogLevel = LOG_INFO;
-    size_t _maxFileSize = 1024 * 1024;
+    size_t _maxFileSize = 1024 * 1024; // 1MB default
+    int _maxFiles = 10;
     bool _fileLoggingEnabled = true;
     uint32_t _bootCounter = 0;
 
+    // Thread safety
     SemaphoreHandle_t _mutex = nullptr;
+
+    // Async queue members
     QueueHandle_t _logQueue = nullptr;
     TaskHandle_t _writerTask = nullptr;
+    SemaphoreHandle_t _writerExitSemaphore = nullptr;
     volatile bool _shutdownRequested = false;
     volatile uint32_t _droppedCount = 0;
+    volatile uint32_t _totalEnqueued = 0;
+    volatile uint32_t _totalWritten = 0;
+    uint32_t _lastDropWarning = 0;
 
-    static const int QUEUE_SIZE = 32;
+    // Async queue constants
+    static const int QUEUE_SIZE = 64;
+    static const int BATCH_SIZE = 8;
     static const int WRITER_TASK_STACK_SIZE = 4096;
     static const int WRITER_TASK_PRIORITY = 1;
 
+    // Async queue methods
     bool enqueueLogEntry(LogLevel level, const char* message, bool immediate);
     void processLogEntry(const LogEntry& entry);
     static void writerTaskFunction(void* parameter);
 
+    // Internal methods
     void writeToFile(const char* message);
     String formatLogEntry(LogLevel level, const char* message);
     String getLogLevelString(LogLevel level);
     String getCurrentTimestamp();
     String generateLogFileName();
     bool createLogDirectory();
+    void cleanupOldLogs();
 
+    // Thread-safe wrapper for file operations
     bool safeFileOperation(std::function<bool()> operation);
+
+    // Internal (no mutex) directory scan — called from within mutex-held context
+    std::vector<String> listLogFilesInternal();
 };
 
 #define LOG_T(msg) SDLogger::getInstance().trace(msg)
