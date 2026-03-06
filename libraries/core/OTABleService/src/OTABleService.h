@@ -51,7 +51,7 @@ private:
     String _versionString;
 
     volatile bool _hasPendingCommand;
-    static const int MAX_PENDING_SIZE = 512;
+    static const int MAX_PENDING_SIZE = 4096;
     char _pendingBuffer[MAX_PENDING_SIZE];
     volatile int _pendingLength;
 

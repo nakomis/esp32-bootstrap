@@ -1,6 +1,7 @@
 #include "OTABleService.h"
 #include "OTAUpdate.h"
 #include "WifiConnect.h"
+#include "SDLogger.h"
 
 static const char* TAG = "OTA_BLE";
 
@@ -24,11 +25,11 @@ OTABleService::OTABleService()
 
 void OTABleService::init(BLEServer* pServer) {
     if (!pServer) {
-        log_e("Cannot init OTA service: no BLE server");
+        SDLogger::getInstance().error("Cannot init OTA service: no BLE server");
         return;
     }
 
-    log_i("Initializing OTA BLE service");
+    SDLogger::getInstance().info("Initializing OTA BLE service");
 
     _pService = pServer->createService(OTA_SERVICE_UUID);
 
@@ -67,7 +68,7 @@ void OTABleService::init(BLEServer* pServer) {
     pAdvertising->setMinPreferred(0x06);  // For iOS compatibility
     pAdvertising->start();
 
-    log_i("OTA BLE service started (UUID: %s)", NAKOMIS_ESP32_SERVICE_UUID);
+    SDLogger::getInstance().infof("OTA BLE service started (UUID: %s)", NAKOMIS_ESP32_SERVICE_UUID);
 }
 
 void OTABleService::handle() {
@@ -133,7 +134,7 @@ void OTABleService::onWrite(BLECharacteristic* pCharacteristic) {
 }
 
 void OTABleService::processCommand(const String& json) {
-    log_i("OTA command received: %s", json.c_str());
+    SDLogger::getInstance().infof("OTA command received: %s", json.c_str());
 
     DynamicJsonDocument doc(1024);
     DeserializationError error = deserializeJson(doc, json);
@@ -196,7 +197,7 @@ void OTABleService::handleOTAUpdate(const String& url, const String& version) {
             return;
         }
 
-        log_i("WiFi not connected, attempting to connect...");
+        SDLogger::getInstance().info("WiFi not connected, attempting to connect...");
         sendProgress(0, "Connecting to WiFi...");
 
         int result = _wifi->connect();
@@ -205,10 +206,10 @@ void OTABleService::handleOTAUpdate(const String& url, const String& version) {
             return;
         }
 
-        log_i("WiFi connected successfully");
+        SDLogger::getInstance().info("WiFi connected successfully");
     }
 
-    log_i("Starting OTA update from: %s (version: %s)", url.c_str(), version.c_str());
+    SDLogger::getInstance().infof("Starting OTA update from: %s (version: %s)", url.c_str(), version.c_str());
     sendProgress(5, "Starting download...");
 
     // Use SD card based OTA (with bootloader)
@@ -281,7 +282,7 @@ void OTABleService::handleGetStatus() {
     _pStatusChar->setValue(json.c_str());
     _pStatusChar->notify();
 
-    log_i("Status sent: %s", json.c_str());
+    SDLogger::getInstance().infof("Status sent: %s", json.c_str());
 }
 
 void OTABleService::sendStatus(const String& status, const String& message, int progress) {
@@ -300,7 +301,7 @@ void OTABleService::sendStatus(const String& status, const String& message, int 
     _pStatusChar->setValue(json.c_str());
     _pStatusChar->notify();
 
-    log_i("OTA status: %s", json.c_str());
+    SDLogger::getInstance().infof("OTA status: %s", json.c_str());
 }
 
 void OTABleService::sendProgress(int progress, const String& message) {
