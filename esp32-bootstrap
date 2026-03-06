@@ -322,6 +322,38 @@ def create_project(project_name: str, options: dict):
             copy_directory(camera_lib, embedded_dir / 'lib' / 'Camera', replacements)
             print("  Copied: Camera")
 
+    if options.get('command_dispatcher'):
+        print("\nCopying CommandDispatcher library...")
+        command_dispatcher_lib = LIBRARIES_DIR / 'optional' / 'CommandDispatcher'
+        if command_dispatcher_lib.exists():
+            copy_directory(command_dispatcher_lib, embedded_dir / 'lib' / 'CommandDispatcher', replacements)
+            print("  Copied: CommandDispatcher")
+
+    if options.get('mqtt_service'):
+        print("\nCopying MqttService library...")
+        mqtt_service_lib = LIBRARIES_DIR / 'optional' / 'MqttService'
+        if mqtt_service_lib.exists():
+            copy_directory(mqtt_service_lib, embedded_dir / 'lib' / 'MqttService', replacements)
+            print("  Copied: MqttService")
+
+        # Add PubSubClient to platformio.ini
+        pio_ini = embedded_dir / 'platformio.ini'
+        if pio_ini.exists():
+            pio_content = pio_ini.read_text()
+            pio_content = pio_content.replace(
+                'lib_deps =',
+                'lib_deps =\n    ; MQTT\n    knolleary/PubSubClient@^2.8'
+            )
+            pio_ini.write_text(pio_content)
+            print("  Added PubSubClient to embedded/platformio.ini")
+
+    if options.get('mqtt_ota'):
+        print("\nCopying MqttOTA library...")
+        mqtt_ota_lib = LIBRARIES_DIR / 'optional' / 'MqttOTA'
+        if mqtt_ota_lib.exists():
+            copy_directory(mqtt_ota_lib, embedded_dir / 'lib' / 'MqttOTA', replacements)
+            print("  Copied: MqttOTA")
+
     # Copy certificates scripts if selected
     if options.get('certificates'):
         print("\nSetting up certificate management...")
@@ -406,6 +438,9 @@ It will be converted to PascalCase for AWS/CDK identifiers.
     options = {
         'aws_auth': False,
         'camera': False,
+        'command_dispatcher': False,
+        'mqtt_service': False,
+        'mqtt_ota': False,
         'certificates': False,
     }
 
@@ -425,11 +460,44 @@ It will be converted to PascalCase for AWS/CDK identifiers.
             style=custom_style
         ).ask()
 
+        options['command_dispatcher'] = questionary.confirm(
+            "Include CommandDispatcher library (BLE/MQTT command routing)?",
+            default=False,
+            style=custom_style
+        ).ask()
+
+        options['mqtt_service'] = questionary.confirm(
+            "Include MqttService library (MQTT client with AWS IoT support)?",
+            default=False,
+            style=custom_style
+        ).ask()
+
+        options['mqtt_ota'] = questionary.confirm(
+            "Include MqttOTA library (OTA updates via MQTT; requires MqttService and CommandDispatcher)?",
+            default=False,
+            style=custom_style
+        ).ask()
+
         options['certificates'] = questionary.confirm(
             "Include certificate management scripts?",
             default=False,
             style=custom_style
         ).ask()
+
+        # Auto-add dependencies
+        selected_optional = [k for k, v in options.items() if v and k != 'certificates']
+
+        if 'mqtt_ota' in selected_optional:
+            for dep in ['mqtt_service', 'command_dispatcher']:
+                if dep not in selected_optional:
+                    label = {'mqtt_service': 'MqttService', 'command_dispatcher': 'CommandDispatcher'}[dep]
+                    print(f"  -> Auto-adding {label} (required by MqttOTA)")
+                    options[dep] = True
+
+        if options.get('mqtt_service'):
+            if not options.get('command_dispatcher'):
+                print(f"  -> Auto-adding CommandDispatcher (required by MqttService)")
+                options['command_dispatcher'] = True
 
         # Confirm
         print()
@@ -440,6 +508,9 @@ It will be converted to PascalCase for AWS/CDK identifiers.
         print(f"Optional features:")
         print(f"  - AWSAuth: {'Yes' if options['aws_auth'] else 'No'}")
         print(f"  - Camera: {'Yes' if options['camera'] else 'No'}")
+        print(f"  - CommandDispatcher: {'Yes' if options['command_dispatcher'] else 'No'}")
+        print(f"  - MqttService: {'Yes' if options['mqtt_service'] else 'No'}")
+        print(f"  - MqttOTA: {'Yes' if options['mqtt_ota'] else 'No'}")
         print(f"  - Certificates: {'Yes' if options['certificates'] else 'No'}")
         print()
 
