@@ -1,0 +1,10 @@
+{
+  "name": "MqttService",
+  "version": "1.0.0",
+  "description": "AWS IoT MQTT client with mTLS, command dispatch, and pause/resume for OTA",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "dependencies": {
+    "PubSubClient": "^2.8"
+  }
+}

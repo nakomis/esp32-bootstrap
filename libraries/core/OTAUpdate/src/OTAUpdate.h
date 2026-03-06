@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <Preferences.h>
+#include "SDLogger.h"
 
 class HTTPClient;
 

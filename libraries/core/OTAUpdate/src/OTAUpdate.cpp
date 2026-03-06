@@ -4,6 +4,7 @@
 #include <SD_MMC.h>
 #include <Preferences.h>
 #include <Update.h>
+#include <esp_heap_caps.h>
 
 static const char* TAG = "OTA";
 
@@ -21,9 +22,8 @@ OTAUpdate::OTAUpdate() {
     _status = "Ready";
     _updateCallback = nullptr;
     _progressCallback = nullptr;
-    _httpClient = new HTTPClient();
-    _secureClient = new WiFiClientSecure();
-    _secureClient->setInsecure();  // Skip certificate validation
+    _httpClient = nullptr;   // Created on demand to avoid memory fragmentation
+    _secureClient = nullptr; // Created on demand
     _totalSize = 0;
     _downloadedSize = 0;
 }
@@ -61,8 +61,16 @@ int OTAUpdate::getProgress() {
 
 void OTAUpdate::cancelUpdate() {
     if (_updating) {
-        log_w("Cancelling OTA update");
-        _httpClient->end();
+        SDLogger::getInstance().warnf("Cancelling OTA update");
+        if (_httpClient) {
+            _httpClient->end();
+            delete _httpClient;
+            _httpClient = nullptr;
+        }
+        if (_secureClient) {
+            delete _secureClient;
+            _secureClient = nullptr;
+        }
         _updating = false;
         _status = "Cancelled";
         _progress = 0;
@@ -75,11 +83,15 @@ void OTAUpdate::cancelUpdate() {
 
 bool OTAUpdate::downloadToSD(const char* firmwareURL) {
     if (_updating) {
-        log_w("Update already in progress");
+        SDLogger::getInstance().warnf("Update already in progress");
         return false;
     }
 
-    log_i("Starting OTA download from %s", firmwareURL);
+    // Clean up any existing clients to avoid fragmentation
+    if (_httpClient) { delete _httpClient; _httpClient = nullptr; }
+    if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
+
+    SDLogger::getInstance().infof("Starting OTA download from %s", firmwareURL);
 
     // Disable SD file logging to free memory and prevent DMA conflicts during download
     // Must flush before unmounting to ensure the background writer task
@@ -91,16 +103,18 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
     SD_MMC.end();
     delay(100);
 
-    // Re-enable internal pull-ups on SD card pins (SD_MMC.end() may have reset them)
+#ifdef ESP32S3_CAM
+    // Re-enable internal pull-ups (SD_MMC.end() may reset GPIO state)
     pinMode(SD_CLK_PIN, INPUT_PULLUP);
     pinMode(SD_CMD_PIN, INPUT_PULLUP);
     pinMode(SD_D0_PIN, INPUT_PULLUP);
-    delay(10);  // Let pull-ups stabilize
-
+    delay(10);  // Let pull-ups stabilise
     SD_MMC.setPins(SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN);
-    if (!SD_MMC.begin("/sdcard", true)) {
-        log_e("Failed to remount SD card");
-        SDLogger::getInstance().setFileLoggingEnabled(true);
+    if (!SD_MMC.begin("/sdcard", true)) {  // 1-bit mode for ESP32-S3
+#else
+    if (!SD_MMC.begin()) {
+#endif
+        SDLogger::getInstance().errorf("Failed to remount SD_MMC for OTA download");
         delay(2000);
         ESP.restart();
         return false;
@@ -110,13 +124,21 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
     _progress = 0;
     _status = "Downloading...";
 
-    // Configure HTTP client
+    // Configure HTTP client - create fresh instances to avoid fragmentation
     String url = String(firmwareURL);
     if (url.startsWith("https://")) {
-        log_i("Using HTTPS");
+        SDLogger::getInstance().infof("Largest INTERNAL free block: %d bytes",
+            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        SDLogger::getInstance().infof("Free internal heap: %d bytes",
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        SDLogger::getInstance().infof("Free PSRAM: %d bytes",
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        _secureClient = new WiFiClientSecure();
+        _secureClient->setInsecure();  // Skip certificate validation for S3 presigned URLs
+        _httpClient = new HTTPClient();
         _httpClient->begin(*_secureClient, firmwareURL);
     } else {
-        log_i("Using HTTP");
+        _httpClient = new HTTPClient();
         WiFiClient client;
         _httpClient->begin(client, firmwareURL);
     }
@@ -126,8 +148,10 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
     int httpCode = _httpClient->GET();
 
     if (httpCode != HTTP_CODE_OK) {
-        log_e("HTTP GET failed: %d", httpCode);
+        SDLogger::getInstance().errorf("HTTP GET failed: %d", httpCode);
         _httpClient->end();
+        delete _httpClient; _httpClient = nullptr;
+        if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
         SDLogger::getInstance().setFileLoggingEnabled(true);
         _updating = false;
         delay(2000);
@@ -137,8 +161,10 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
 
     size_t firmwareSize = _httpClient->getSize();
     if (firmwareSize == 0 || firmwareSize == (size_t)-1) {
-        log_e("Invalid firmware size: %d", firmwareSize);
+        SDLogger::getInstance().errorf("Invalid firmware size: %u", firmwareSize);
         _httpClient->end();
+        delete _httpClient; _httpClient = nullptr;
+        if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
         SDLogger::getInstance().setFileLoggingEnabled(true);
         _updating = false;
         delay(2000);
@@ -147,12 +173,14 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
     }
 
     _totalSize = firmwareSize;
-    log_i("Firmware size: %d bytes", firmwareSize);
+    SDLogger::getInstance().infof("Firmware size: %u bytes", firmwareSize);
 
     File file = SD_MMC.open(FIRMWARE_FILE, FILE_WRITE);
     if (!file) {
-        log_e("Failed to open SD card file for writing");
+        SDLogger::getInstance().errorf("Failed to open SD card file for writing");
         _httpClient->end();
+        delete _httpClient; _httpClient = nullptr;
+        if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
         SDLogger::getInstance().setFileLoggingEnabled(true);
         _updating = false;
         delay(2000);
@@ -174,10 +202,12 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
             if (bytesRead > 0) {
                 size_t bytesWritten = file.write(buffer, bytesRead);
                 if (bytesWritten != bytesRead) {
-                    log_e("SD write failed");
+                    SDLogger::getInstance().errorf("SD write failed");
                     file.close();
                     SD_MMC.remove(FIRMWARE_FILE);
                     _httpClient->end();
+                    delete _httpClient; _httpClient = nullptr;
+                    if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
                     SDLogger::getInstance().setFileLoggingEnabled(true);
                     _updating = false;
                     delay(2000);
@@ -194,7 +224,7 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
                 }
 
                 if (_progress >= lastProgress + 10) {
-                    log_i("Download: %d%% (%d/%d bytes)", _progress, written, firmwareSize);
+                    SDLogger::getInstance().infof("Download: %d%% (%u/%u bytes)", _progress, written, firmwareSize);
                     lastProgress = _progress;
                 }
             }
@@ -204,9 +234,11 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
 
     file.close();
     _httpClient->end();
+    delete _httpClient; _httpClient = nullptr;
+    if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
 
     if (written != firmwareSize) {
-        log_e("Download incomplete: %d of %d bytes", written, firmwareSize);
+        SDLogger::getInstance().errorf("Download incomplete: %u of %u bytes", written, firmwareSize);
         SD_MMC.remove(FIRMWARE_FILE);
         SDLogger::getInstance().setFileLoggingEnabled(true);
         _updating = false;
@@ -215,7 +247,7 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
         return false;
     }
 
-    log_i("Download complete: %d bytes", written);
+    SDLogger::getInstance().infof("Download complete: %u bytes", written);
 
     // Set NVS flags for bootloader
     Preferences prefs;
@@ -223,7 +255,7 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
     prefs.putBool("pending", true);
     prefs.putUInt("size", firmwareSize);
     prefs.end();
-    log_i("NVS flags set for bootloader");
+    SDLogger::getInstance().infof("NVS flags set for bootloader");
 
     _progress = 100;
     _status = "Download complete - rebooting...";
@@ -236,7 +268,7 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
         _updateCallback(true, "Download complete, rebooting to flash");
     }
 
-    log_i("Rebooting to bootloader...");
+    SDLogger::getInstance().infof("Rebooting to bootloader...");
     Serial.flush();
     delay(2000);
     ESP.restart();
@@ -246,23 +278,29 @@ bool OTAUpdate::downloadToSD(const char* firmwareURL) {
 
 bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
     if (_updating) {
-        log_w("Update already in progress");
+        SDLogger::getInstance().warnf("Update already in progress");
         return false;
     }
 
-    log_i("Starting direct-to-flash OTA from %s", firmwareURL);
+    // Clean up any existing clients to avoid fragmentation
+    if (_httpClient) { delete _httpClient; _httpClient = nullptr; }
+    if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
+
+    SDLogger::getInstance().infof("Starting direct-to-flash OTA from %s", firmwareURL);
 
     _updating = true;
     _progress = 0;
     _status = "Connecting...";
 
-    // Configure HTTP client
+    // Configure HTTP client - create fresh instances to avoid fragmentation
     String url = String(firmwareURL);
     if (url.startsWith("https://")) {
-        log_i("Using HTTPS");
+        _secureClient = new WiFiClientSecure();
+        _secureClient->setInsecure();  // Skip certificate validation for S3 presigned URLs
+        _httpClient = new HTTPClient();
         _httpClient->begin(*_secureClient, firmwareURL);
     } else {
-        log_i("Using HTTP");
+        _httpClient = new HTTPClient();
         WiFiClient client;
         _httpClient->begin(client, firmwareURL);
     }
@@ -272,8 +310,10 @@ bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
     int httpCode = _httpClient->GET();
 
     if (httpCode != HTTP_CODE_OK) {
-        log_e("HTTP GET failed: %d", httpCode);
+        SDLogger::getInstance().errorf("HTTP GET failed: %d", httpCode);
         _httpClient->end();
+        delete _httpClient; _httpClient = nullptr;
+        if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
         _updating = false;
         _status = "HTTP error";
         if (_updateCallback) {
@@ -284,8 +324,10 @@ bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
 
     size_t firmwareSize = _httpClient->getSize();
     if (firmwareSize == 0 || firmwareSize == (size_t)-1) {
-        log_e("Invalid firmware size: %d", firmwareSize);
+        SDLogger::getInstance().errorf("Invalid firmware size: %u", firmwareSize);
         _httpClient->end();
+        delete _httpClient; _httpClient = nullptr;
+        if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
         _updating = false;
         _status = "Invalid size";
         if (_updateCallback) {
@@ -295,14 +337,16 @@ bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
     }
 
     _totalSize = firmwareSize;
-    log_i("Firmware size: %d bytes", firmwareSize);
+    SDLogger::getInstance().infof("Firmware size: %u bytes", firmwareSize);
 
     _status = "Flashing...";
 
     // Begin OTA update
     if (!Update.begin(firmwareSize, U_FLASH)) {
-        log_e("Not enough space for OTA: %s", Update.errorString());
+        SDLogger::getInstance().errorf("Not enough space for OTA: %s", Update.errorString());
         _httpClient->end();
+        delete _httpClient; _httpClient = nullptr;
+        if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
         _updating = false;
         _status = "No space";
         if (_updateCallback) {
@@ -325,9 +369,11 @@ bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
             if (bytesRead > 0) {
                 size_t bytesWritten = Update.write(buffer, bytesRead);
                 if (bytesWritten != bytesRead) {
-                    log_e("Flash write failed");
+                    SDLogger::getInstance().errorf("Flash write failed");
                     Update.abort();
                     _httpClient->end();
+                    delete _httpClient; _httpClient = nullptr;
+                    if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
                     _updating = false;
                     _status = "Write failed";
                     if (_updateCallback) {
@@ -345,7 +391,7 @@ bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
                 }
 
                 if (_progress >= lastProgress + 10) {
-                    log_i("Flash: %d%% (%d/%d bytes)", _progress, written, firmwareSize);
+                    SDLogger::getInstance().infof("Flash: %d%% (%u/%u bytes)", _progress, written, firmwareSize);
                     lastProgress = _progress;
                 }
             }
@@ -354,9 +400,11 @@ bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
     }
 
     _httpClient->end();
+    delete _httpClient; _httpClient = nullptr;
+    if (_secureClient) { delete _secureClient; _secureClient = nullptr; }
 
     if (written != firmwareSize) {
-        log_e("Download incomplete: %d of %d bytes", written, firmwareSize);
+        SDLogger::getInstance().errorf("Download incomplete: %u of %u bytes", written, firmwareSize);
         Update.abort();
         _updating = false;
         _status = "Incomplete";
@@ -368,7 +416,7 @@ bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
 
     // Finalize update
     if (!Update.end(true)) {
-        log_e("Update finalization failed: %s", Update.errorString());
+        SDLogger::getInstance().errorf("Update finalization failed: %s", Update.errorString());
         _updating = false;
         _status = "Finalize failed";
         if (_updateCallback) {
@@ -377,7 +425,7 @@ bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
         return false;
     }
 
-    log_i("OTA complete: %d bytes flashed", written);
+    SDLogger::getInstance().infof("OTA complete: %u bytes flashed", written);
 
     _progress = 100;
     _status = "Complete - rebooting...";
@@ -390,7 +438,7 @@ bool OTAUpdate::downloadAndFlash(const char* firmwareURL) {
         _updateCallback(true, "Update complete, rebooting");
     }
 
-    log_i("Rebooting...");
+    SDLogger::getInstance().infof("Rebooting...");
     Serial.flush();
     delay(2000);
     ESP.restart();

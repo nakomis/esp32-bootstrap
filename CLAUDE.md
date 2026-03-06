@@ -19,6 +19,8 @@ A CLI tool to bootstrap new ESP32-S3-CAM projects with a standardized structure,
 - [x] Copied core libraries (SDLogger, WifiConnect, OTAUpdate, OTABleService)
 - [x] Created new WifiBleService library for BLE WiFi configuration
 - [x] Copied optional libraries (AWSAuth, Camera)
+- [x] Synced core libraries from catcam: SDLogger retrieval API, OTAUpdate lazy clients, OTABleService larger buffer
+- [x] Added optional libraries: CommandDispatcher, MqttService, MqttOTA
 - [x] Comprehensive .gitignore excludes certificates and secrets
 - [x] Fixed CDK IoT certificate creation (uses `cdk-iot-core-certificates-v3` package)
 - [x] Fixed SDLogger API usage in main.cpp template (singleton pattern, LOG_I/LOG_IF macros)
@@ -187,6 +189,9 @@ This allows users to configure WiFi via the sandboxsite Bluetooth page without n
 |---------|---------|--------|
 | AWSAuth | SigV4 signing + credentials provider | bootboots |
 | Camera | ESP32-S3-CAM capture with PSRAM | bootboots |
+| CommandDispatcher | Unified command dispatch for BLE + MQTT transports | catcam |
+| MqttService | AWS IoT MQTT client with mTLS, pause/resume for OTA | catcam |
+| MqttOTA | MQTT-triggered OTA updates with URL chunking | catcam |
 
 **Implementation:** Interactive prompt during bootstrap asking which optional libraries to include.
 
@@ -427,7 +432,10 @@ esp32-bootstrap/
 │   │   └── OTABleService/
 │   └── optional/                # User-selected
 │       ├── AWSAuth/
-│       └── Camera/
+│       ├── Camera/
+│       ├── CommandDispatcher/
+│       ├── MqttService/
+│       └── MqttOTA/
 └── README.md                    # Documentation for the bootstrap tool
 ```
 
@@ -459,6 +467,15 @@ LOG_I("Info message");
 LOG_IF("Formatted: %s %d", str, num);
 LOG_E("Error message");
 ```
+
+### SDLogger Log Retrieval API
+The SDLogger library includes a retrieval API for BLE/MQTT log viewing:
+- `getRecentLogEntries(int maxLines = 50)` — returns last N lines as a String
+- `processRecentLogEntries(int maxLines, callback)` — streams lines one at a time to a callback
+- `listLogFiles()` — returns a sorted vector of log filenames from the SD card
+- `processLogFile(filename, maxLines, callback)` — streams lines from a specific log file
+
+These are used by BluetoothService (catcam) to serve logs over BLE and by MqttService for remote diagnostics.
 
 ### CDK IoT Certificates
 AWS IoT only provides the certificate PEM and private key at creation time - they cannot be retrieved later. The `cdk-iot-core-certificates-v3` package uses a Custom Resource Lambda to:
@@ -493,4 +510,4 @@ mbedtls_pk_parse_key(&pkey,
 The `PROGMEM` attribute stores certificates in flash memory rather than RAM.
 
 ---
-*Last updated: 2026-02-03*
+*Last updated: 2026-03-06*
