@@ -1,0 +1,7 @@
+{
+  "name": "CommandDispatcher",
+  "version": "1.0.0",
+  "description": "Unified command dispatch for BLE and MQTT transports",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}
