@@ -8,9 +8,9 @@
 
 ## Related Projects
 
-- **Sandboxsite:** https://github.com/nakomis/sandboxsite - Web UI for BLE + OTA updates
+- **Sandboxsite:** https://github.com/nakomis/sandboxsite - Reference web UI for BLE + OTA flows (project may use a different front-end)
 - **ESP32 Bootloader:** https://github.com/nakomis/esp32-bootloader - Factory partition bootloader
-- **Firmware Bucket:** `s3://nakomis-firmware-updates/{{ PROJECT_NAME_PASCAL }}/`
+- **Firmware Bucket:** `s3://nakomis-firmware-{env}/{{ PROJECT_NAME_PASCAL }}/` where `{env}` is `sandbox` or `prod` (Fleet convention)
 
 ## Pin Mapping
 
@@ -63,11 +63,11 @@ python generate_secrets.py
 | WifiConnect | WiFi management with NVS credential storage |
 | WifiBleService | BLE WiFi configuration (save SSID/password via BLE) |
 | OTAUpdate | Download firmware from HTTPS URL to SD card |
-| OTABleService | BLE service for OTA updates (sandboxsite compatible) |
+| BluetoothOTA | BLE service for OTA updates (Nakomis standard UUIDs) |
 
 ### BLE Services
 
-All projects use standardized UUIDs for sandboxsite compatibility:
+All projects use standardised Nakomis ESP32 UUIDs (compatible with sandboxsite and any conforming web/mobile client):
 
 ```cpp
 #define NAKOMIS_ESP32_SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -88,10 +88,10 @@ All projects use standardized UUIDs for sandboxsite compatibility:
 
 ## OTA Update Flow
 
-1. User connects via sandboxsite Bluetooth page
+1. User connects to the device from a BLE client (e.g. sandboxsite, or a project-specific UI)
 2. User configures WiFi via BLE (if needed)
-3. User selects firmware version in sandboxsite
-4. Sandboxsite sends OTA command with signed S3 URL
+3. User selects firmware version
+4. Client sends OTA command with signed S3 URL
 5. Device shuts down BLE to free memory
 6. Device downloads firmware to `/firmware_update.bin` on SD card
 7. Device reboots
@@ -105,7 +105,7 @@ All projects use standardized UUIDs for sandboxsite compatibility:
 - `/{{ PROJECT_NAME_PASCAL }}/{{ PROJECT_NAME_PASCAL }}Thing/certPem`
 - `/{{ PROJECT_NAME_PASCAL }}/{{ PROJECT_NAME_PASCAL }}Thing/privKey`
 
-**S3 Firmware Path:** `s3://nakomis-firmware-updates/{{ PROJECT_NAME_PASCAL }}/<version>/firmware.bin`
+**S3 Firmware Path:** `s3://nakomis-firmware-{env}/{{ PROJECT_NAME_PASCAL }}/<version>/firmware.bin` (Fleet convention — `{env}` is `sandbox` or `prod`; override via `NAKOMIS_FIRMWARE_BUCKET`)
 
 ## Partition Table (16MB Flash)
 

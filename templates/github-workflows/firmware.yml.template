@@ -1,0 +1,36 @@
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Fleet environment
+        type: choice
+        options: [sandbox, prod]
+        default: sandbox
+
+# TODO(FLEET-1): swap this for `uses: nakomis/.github/.github/workflows/pio-firmware-upload.yml@main`
+# once the reusable workflow is published. Until then this is a build-only sanity check
+# so PRs can show a green "Firmware" status.
+
+jobs:
+  build:
+    name: Build firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build (esp32s3_n16r8)
+        working-directory: embedded/{{ PROJECT_NAME }}
+        run: pio run -e esp32s3_n16r8
