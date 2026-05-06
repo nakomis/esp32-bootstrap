@@ -1,0 +1,14 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op
+        run: echo "ok"
