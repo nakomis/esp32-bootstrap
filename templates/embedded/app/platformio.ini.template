@@ -12,6 +12,10 @@ board_build.flash_mode = qio
 board_build.flash_size = 16MB
 board_build.partitions = partitions.csv
 
+; Override the program-size check to use OTA0 (7MB) instead of the
+; default factory partition (1MB, reserved for the Nakomis bootloader).
+extra_scripts = pre:extra_script.py
+
 ; Enable PSRAM
 build_flags =
     -DBOARD_HAS_PSRAM

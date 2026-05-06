@@ -418,9 +418,11 @@ void BluetoothOTA::processOTAUpdate(const OTACommand& command) {
     sendStatusUpdate("starting", "Starting OTA update...");
 
     // Free MQTT SSL resources first - this releases ~40KB of heap
+#ifdef BLUETOOTH_OTA_HAS_MQTT_SERVICE
     if (_mqttService) {
         _mqttService->pause();
     }
+#endif
 
     // Fully shut down the BLE stack to recover ~50-80KB of internal SRAM.
     // Stopping advertising alone only frees ~2KB, leaving the internal heap too

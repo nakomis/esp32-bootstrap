@@ -8,7 +8,16 @@
 #include <BLE2902.h>
 #include "../../SDLogger/src/SDLogger.h"
 #include "../../OTAUpdate/src/OTAUpdate.h"
-#include "../../MqttService/src/MqttService.h"
+
+// MqttService is an optional dependency. When present, BluetoothOTA will pause
+// it before an OTA download to free SSL memory. When absent, the project just
+// loses that hand-off — OTA still works.
+#if __has_include("../../MqttService/src/MqttService.h")
+#  include "../../MqttService/src/MqttService.h"
+#  define BLUETOOTH_OTA_HAS_MQTT_SERVICE 1
+#else
+class MqttService;  // forward declaration; setter remains usable but is a no-op
+#endif
 
 // Nakomis ESP32 OTA Service UUIDs (shared across all Nakomis ESP32 projects)
 #define NAKOMIS_ESP32_SERVICE_UUID      "99db6ea6-27e4-434d-aafd-795cf95feb06"
