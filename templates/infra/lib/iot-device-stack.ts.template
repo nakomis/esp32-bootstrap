@@ -4,6 +4,13 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 import { ThingWithCert } from 'cdk-iot-core-certificates-v3';
 
+export interface IoTDeviceStackProps extends cdk.StackProps {
+    /** Fleet environment — selects firmware bucket (nakomis-firmware-{env}). */
+    readonly fleetEnv: 'sandbox' | 'prod';
+    /** Optional override for the firmware bucket name. */
+    readonly firmwareBucketName?: string;
+}
+
 /**
  * {{ PROJECT_NAME_PASCAL }} IoT Device Stack
  *
@@ -15,11 +22,15 @@ import { ThingWithCert } from 'cdk-iot-core-certificates-v3';
  * - Role alias for temporary credentials
  */
 export class IoTDeviceStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    constructor(scope: Construct, id: string, props: IoTDeviceStackProps) {
         super(scope, id, props);
 
         const projectName = '{{ PROJECT_NAME_PASCAL }}';
         const thingName = `${projectName}Thing`;
+        const firmwareBucketName = props.firmwareBucketName ?? `nakomis-firmware-${props.fleetEnv}`;
+
+        // TODO(FLEET-4): tag this Thing with a `project` attribute once cdk-iot-core-certificates-v3
+        // exposes attributePayload, so Fleet-wide tooling can group devices by project.
 
         // Create IoT Thing with certificate (saves cert/key to SSM automatically)
         const { thingArn, certId, certPem, privKey } = new ThingWithCert(this, 'Thing', {
@@ -43,7 +54,7 @@ export class IoTDeviceStack extends cdk.Stack {
                 's3:PutObject',
             ],
             resources: [
-                `arn:aws:s3:::nakomis-firmware-updates/${projectName}/*`,
+                `arn:aws:s3:::${firmwareBucketName}/${projectName}/*`,
             ],
         }));
 

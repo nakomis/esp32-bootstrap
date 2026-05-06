@@ -9,4 +9,12 @@ const env = {
     region: process.env.CDK_DEFAULT_REGION || 'eu-west-2'
 };
 
-new IoTDeviceStack(app, '{{ PROJECT_NAME_PASCAL }}IoTStack', { env });
+// Fleet env: from -c fleetEnv=... or NAKOMIS_ENV; defaults to sandbox.
+const fleetEnv = (app.node.tryGetContext('fleetEnv')
+    ?? process.env.NAKOMIS_ENV
+    ?? 'sandbox') as 'sandbox' | 'prod';
+
+new IoTDeviceStack(app, `{{ PROJECT_NAME_PASCAL }}IoTStack-${fleetEnv}`, {
+    env,
+    fleetEnv,
+});

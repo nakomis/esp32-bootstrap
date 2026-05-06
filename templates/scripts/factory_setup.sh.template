@@ -14,7 +14,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-S3_BUCKET="nakomis-firmware-updates"
+# Fleet env selects firmware bucket (nakomis-firmware-{env}). Override with NAKOMIS_FIRMWARE_BUCKET.
+NAKOMIS_ENV="${NAKOMIS_ENV:-sandbox}"
+S3_BUCKET="${NAKOMIS_FIRMWARE_BUCKET:-nakomis-firmware-${NAKOMIS_ENV}}"
 BOOTLOADER_PROJECT="Bootloader"
 PROJECT_NAME="{{ PROJECT_NAME_PASCAL }}"
 
@@ -58,6 +60,8 @@ if [ -z "$AWS_PROFILE" ]; then
     export AWS_PROFILE
 fi
 echo "  AWS Profile: $AWS_PROFILE"
+echo "  Fleet env:   $NAKOMIS_ENV"
+echo "  S3 bucket:   $S3_BUCKET"
 
 echo ""
 

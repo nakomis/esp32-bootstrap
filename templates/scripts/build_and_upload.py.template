@@ -13,13 +13,30 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import ClientError
 
+DEFAULT_PROJECT_NAME = "{{ PROJECT_NAME_PASCAL }}"
+
+
+def resolve_firmware_bucket(env: str) -> str:
+    """Resolve the S3 firmware bucket name.
+
+    Order of precedence:
+      1. NAKOMIS_FIRMWARE_BUCKET env var (explicit override)
+      2. Fleet convention: nakomis-firmware-{env}
+    """
+    override = os.environ.get('NAKOMIS_FIRMWARE_BUCKET')
+    if override:
+        return override
+    return f"nakomis-firmware-{env}"
+
+
 class FirmwareBuilder:
-    def __init__(self, project_root):
+    def __init__(self, project_root, env: str, project_name: str):
         self.project_root = Path(project_root)
         self.version_file = self.project_root / "include" / "version.h"
         self.platformio_ini = self.project_root / "platformio.ini"
-        self.s3_bucket = "nakomis-firmware-updates"
-        self.project_name = "{{ PROJECT_NAME_PASCAL }}"
+        self.env = env
+        self.project_name = project_name
+        self.s3_bucket = resolve_firmware_bucket(env)
 
     def get_current_version(self):
         """Extract current version from version.h"""
@@ -198,6 +215,10 @@ Examples:
                        help='Only build, do not upload to S3')
     parser.add_argument('-e', '--environment', default='esp32s3_n16r8',
                        help='PlatformIO environment to build (default: esp32s3_n16r8)')
+    parser.add_argument('--env', choices=['sandbox', 'prod'], required=True,
+                       help='Fleet environment (selects firmware bucket: nakomis-firmware-{env})')
+    parser.add_argument('--project', default=DEFAULT_PROJECT_NAME,
+                       help=f'Project name used in S3 key prefix (default: {DEFAULT_PROJECT_NAME})')
 
     args = parser.parse_args()
 
@@ -217,8 +238,10 @@ Examples:
     print("  {{ PROJECT_NAME_PASCAL }} Firmware Build & Upload")
     print("=" * 60)
     print(f"AWS Profile: {aws_profile}")
+    print(f"Fleet env:   {args.env}")
+    print(f"Project:     {args.project}")
 
-    builder = FirmwareBuilder(project_root)
+    builder = FirmwareBuilder(project_root, args.env, args.project)
 
     # Show current version
     current_version = builder.get_current_version()

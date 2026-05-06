@@ -28,16 +28,16 @@
 ### Prerequisites
 
 - [PlatformIO](https://platformio.org/install)
-- [AWS CLI](https://aws.amazon.com/cli/) configured with `nakom.is-sandbox` profile
+- [AWS CLI](https://aws.amazon.com/cli/) — set `AWS_PROFILE` to a profile with access to the target Fleet account (e.g. `nakom.is-sandbox` for the sandbox env)
 - [Node.js](https://nodejs.org/) for CDK
 
 ### Initial Setup
 
-1. **Deploy AWS Infrastructure:**
+1. **Deploy AWS Infrastructure** (pick the Fleet env):
    ```bash
    cd infra
    npm install
-   cdk deploy
+   cdk deploy -c fleetEnv=sandbox    # or prod
    ```
 
 2. **Generate Secrets:**
@@ -48,7 +48,7 @@
 
 3. **Factory Flash:**
    ```bash
-   ./factory_setup.sh
+   NAKOMIS_ENV=sandbox ./factory_setup.sh
    ```
 
 ## Development
@@ -63,13 +63,14 @@ cd embedded/scripts
 ### Upload to S3 (OTA)
 
 ```bash
-python build_and_upload.py           # Patch version bump
-python build_and_upload.py --minor   # Minor version bump
+python build_and_upload.py --env sandbox                    # Patch bump, sandbox bucket
+python build_and_upload.py --env sandbox --version-type minor  # Minor bump
+python build_and_upload.py --env prod                       # Promote to prod bucket
 ```
 
 ## OTA Updates
 
-Updates are delivered via the [sandboxsite](https://sandbox.nakomis.com):
+Updates can be delivered via [sandboxsite](https://sandbox.nakomis.com) or any BLE client speaking the Nakomis ESP32 OTA protocol:
 
 1. Connect to device via Bluetooth
 2. Configure WiFi if needed

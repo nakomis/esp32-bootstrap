@@ -173,6 +173,7 @@ def create_project(project_name: str, options: dict):
     (project_dir / '.claude').mkdir()
     (project_dir / 'scripts').mkdir()
     (project_dir / 'githooks').mkdir()
+    (project_dir / '.github' / 'workflows').mkdir(parents=True)
     (project_dir / 'infra' / 'bin').mkdir(parents=True)
     (project_dir / 'infra' / 'lib').mkdir(parents=True)
     embedded_dir = project_dir / 'embedded'
@@ -287,6 +288,15 @@ def create_project(project_name: str, options: dict):
             if dst_file.suffix in ['.sh', '.py', '']:
                 dst_file.chmod(dst_file.stat().st_mode | 0o111)
             print(f"  Created: scripts/{dst_file.name}")
+
+    # GitHub Actions workflows
+    workflows_templates = TEMPLATES_DIR / 'github-workflows'
+    if workflows_templates.exists():
+        print("\nSetting up GitHub Actions workflows...")
+        workflows_dst = project_dir / '.github' / 'workflows'
+        for template_file in workflows_templates.glob('*.template'):
+            dst_file = copy_template(template_file, workflows_dst, replacements)
+            print(f"  Created: .github/workflows/{dst_file.name}")
 
     # Git hooks
     print("\nSetting up git hooks...")
