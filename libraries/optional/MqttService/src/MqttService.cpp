@@ -1,4 +1,6 @@
 #include "MqttService.h"
+#include "SystemState.h"
+#include "SDLogger.h"
 #include <WiFi.h>
 
 // Static instance for callback routing
@@ -16,14 +18,15 @@ MqttResponseSender::MqttResponseSender(PubSubClient* client, const String& respo
 
 void MqttResponseSender::sendResponse(const String& response) {
     if (_client && _client->connected()) {
-        Serial.printf("MQTT publishing to %s: %s\n", _responseTopic.c_str(), response.c_str());
+        SDLogger::getInstance().debugf("MQTT publishing to %s: %s",
+                                        _responseTopic.c_str(), response.c_str());
         if (!_client->publish(_responseTopic.c_str(), response.c_str())) {
-            Serial.printf("MQTT publish failed\n");
-        } else {
-            Serial.printf("MQTT published to %s: %s\n", _responseTopic.c_str(), response.c_str());
+            SDLogger::getInstance().debugf("MQTT publish failed");
         }
+        SDLogger::getInstance().debugf("MQTT published to %s: %s",
+                                        _responseTopic.c_str(), response.c_str());
     } else {
-        Serial.printf("MQTT not connected, cannot send response\n");
+        SDLogger::getInstance().warnf("MQTT not connected, cannot send response");
     }
 }
 
@@ -36,7 +39,7 @@ MqttService::MqttService()
     , _client(nullptr)
     , _responseSender(nullptr)
     , _dispatcher(nullptr)
-    , _topicPrefix("device/")
+    , _systemState(nullptr)
     , _initialized(false)
     , _connected(false)
     , _lastReconnectAttempt(0)
@@ -66,9 +69,9 @@ void MqttService::messageCallback(char* topic, byte* payload, unsigned int lengt
 
 bool MqttService::init(const char* endpoint, const char* caCert, const char* clientCert,
                        const char* privateKey, const char* thingName) {
-    Serial.printf("Initializing MQTT service...\n");
-    Serial.printf("  Endpoint: %s\n", endpoint);
-    Serial.printf("  Thing: %s\n", thingName);
+    SDLogger::getInstance().infof("Initializing MQTT service...");
+    SDLogger::getInstance().infof("  Endpoint: %s", endpoint);
+    SDLogger::getInstance().infof("  Thing: %s", thingName);
 
     _endpoint = endpoint;
     _thingName = thingName;
@@ -93,17 +96,17 @@ bool MqttService::init(const char* endpoint, const char* caCert, const char* cli
     _responseSender = new MqttResponseSender(_client, _responseTopic);
 
     _initialized = true;
-    Serial.printf("MQTT service initialized\n");
-    Serial.printf("  Command topic: %s\n", _commandTopic.c_str());
-    Serial.printf("  Response topic: %s\n", _responseTopic.c_str());
+    SDLogger::getInstance().infof("MQTT service initialized");
+    SDLogger::getInstance().infof("  Command topic: %s", _commandTopic.c_str());
+    SDLogger::getInstance().infof("  Response topic: %s", _responseTopic.c_str());
 
     return true;
 }
 
 void MqttService::setupTopics() {
-    _commandTopic  = _topicPrefix + _thingName + "/commands";
-    _responseTopic = _topicPrefix + _thingName + "/responses";
-    _statusTopic   = _topicPrefix + _thingName + "/status";
+    _commandTopic = "bootboots/" + _thingName + "/commands";
+    _responseTopic = "bootboots/" + _thingName + "/responses";
+    _statusTopic = "bootboots/" + _thingName + "/status";
 }
 
 bool MqttService::connect() {
@@ -111,24 +114,24 @@ bool MqttService::connect() {
         return false;
     }
 
-    Serial.printf("MQTT connecting to %s...\n", _endpoint.c_str());
+    SDLogger::getInstance().infof("MQTT connecting to %s...", _endpoint.c_str());
 
     // Use thing name as client ID
     if (_client->connect(_thingName.c_str())) {
-        Serial.printf("MQTT connected!\n");
+        SDLogger::getInstance().infof("MQTT connected!");
 
         // Subscribe to command topic
         if (_client->subscribe(_commandTopic.c_str())) {
-            Serial.printf("MQTT subscribed to: %s\n", _commandTopic.c_str());
+            SDLogger::getInstance().infof("MQTT subscribed to: %s", _commandTopic.c_str());
         } else {
-            Serial.printf("MQTT subscribe failed\n");
+            SDLogger::getInstance().errorf("MQTT subscribe failed");
         }
 
         _connected = true;
         return true;
     } else {
         int state = _client->state();
-        Serial.printf("MQTT connection failed, state: %d\n", state);
+        SDLogger::getInstance().warnf("MQTT connection failed, state: %d", state);
         // PubSubClient states:
         // -4: MQTT_CONNECTION_TIMEOUT
         // -3: MQTT_CONNECTION_LOST
@@ -154,7 +157,7 @@ void MqttService::handle() {
     if (WiFi.status() != WL_CONNECTED) {
         if (_connected) {
             _connected = false;
-            Serial.printf("MQTT: WiFi disconnected\n");
+            SDLogger::getInstance().warnf("MQTT: WiFi disconnected");
         }
         return;
     }
@@ -163,7 +166,7 @@ void MqttService::handle() {
     if (!_client->connected()) {
         if (_connected) {
             _connected = false;
-            Serial.printf("MQTT connection lost\n");
+            SDLogger::getInstance().warnf("MQTT connection lost");
         }
 
         // Non-blocking reconnection
@@ -193,20 +196,20 @@ void MqttService::onMessage(char* topic, byte* payload, unsigned int length) {
         message += (char)payload[i];
     }
 
-    Serial.printf("MQTT message on %s: %s\n", topic, message.c_str());
+    SDLogger::getInstance().infof("MQTT message on %s: %s", topic, message.c_str());
 
     // Check if this is a command
     if (String(topic) == _commandTopic) {
         if (_dispatcher) {
             _dispatcher->processCommand(message, _responseSender);
         } else {
-            Serial.printf("MQTT: No command dispatcher set\n");
+            SDLogger::getInstance().warnf("MQTT: No command dispatcher set");
         }
     }
 }
 
 void MqttService::pause() {
-    Serial.printf("MQTT: Pausing connection to free SSL memory...\n");
+    SDLogger::getInstance().infof("MQTT: Pausing connection to free SSL memory...");
 
     if (_client) {
         _client->disconnect();
@@ -228,7 +231,7 @@ void MqttService::pause() {
     _connected = false;
     _initialized = false;  // Will need to reinit on resume
 
-    Serial.printf("MQTT: Paused, free heap: %d bytes\n", ESP.getFreeHeap());
+    SDLogger::getInstance().infof("MQTT: Paused, free heap: %d bytes", ESP.getFreeHeap());
 }
 
 void MqttService::resume() {
@@ -237,11 +240,11 @@ void MqttService::resume() {
     }
 
     if (!_caCert || !_clientCert || !_privateKey) {
-        Serial.printf("MQTT: Cannot resume - no stored certificates\n");
+        SDLogger::getInstance().errorf("MQTT: Cannot resume - no stored certificates");
         return;
     }
 
-    Serial.printf("MQTT: Resuming service, free heap: %d bytes\n", ESP.getFreeHeap());
+    SDLogger::getInstance().infof("MQTT: Resuming service, free heap: %d bytes", ESP.getFreeHeap());
 
     // Recreate secure WiFi client with stored certificates
     _wifiClient = new WiFiClientSecure();
@@ -261,13 +264,31 @@ void MqttService::resume() {
     _initialized = true;
     _lastReconnectAttempt = 0;  // Allow immediate reconnect
 
-    Serial.printf("MQTT: Resumed, will reconnect on next handle()\n");
+    SDLogger::getInstance().infof("MQTT: Resumed, will reconnect on next handle()");
 }
 
 void MqttService::publishStatus() {
-    if (!isConnected() || !_statusCallback) return;
-    String payload = _statusCallback();
-    if (!payload.isEmpty()) {
-        _client->publish(_statusTopic.c_str(), payload.c_str());
+    if (!_client || !_client->connected() || !_systemState) {
+        return;
+    }
+
+    DynamicJsonDocument doc(512);
+    unsigned long uptime = millis() - _systemState->systemStartTime;
+
+    doc["device"] = "BootBoots-CatCam";
+    doc["timestamp"] = millis();
+    doc["uptime_seconds"] = uptime / 1000;
+    doc["wifi_connected"] = _systemState->wifiConnected;
+    doc["camera_ready"] = _systemState->cameraReady;
+    doc["training_mode"] = _systemState->trainingMode;
+    doc["total_detections"] = _systemState->totalDetections;
+
+    String statusJson;
+    serializeJson(doc, statusJson);
+
+    if (_client->publish(_statusTopic.c_str(), statusJson.c_str())) {
+        SDLogger::getInstance().tracef("MQTT status published");
+    } else {
+        SDLogger::getInstance().warnf("MQTT status publish failed");
     }
 }

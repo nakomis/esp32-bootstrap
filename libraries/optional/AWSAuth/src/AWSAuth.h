@@ -59,6 +59,13 @@ public:
     // Refresh credentials if needed
     bool refreshCredentialsIfNeeded(const char* roleAlias);
 
+    // Set MQTT service - will be paused/resumed around SSL requests to free memory
+    void setMqttService(class MqttService* mqttService) { _mqttService = mqttService; }
+
+    // Pause/resume MQTT connection to free SSL memory for HTTPS requests
+    void pauseMqtt();
+    void resumeMqtt();
+
     // Utility methods
     String urlEncode(const String& str);
 
@@ -69,6 +76,7 @@ private:
     const char* clientCert;
     const char* clientKey;
     AWSCredentials credentials;
+    class MqttService* _mqttService;
 
     // Helper methods for SigV4 signing
     String createCanonicalRequest(const String& method, const String& uri,

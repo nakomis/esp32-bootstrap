@@ -3,13 +3,9 @@
 #include <sys/time.h>
 #include <functional>
 #include <algorithm>
+#include <SD_MMC.h>
 #include <FS.h>
 #include <Preferences.h>
-
-// SD card pins for ESP32-S3 (SDMMC 1-bit mode)
-#define SD_CLK_PIN 39
-#define SD_CMD_PIN 38
-#define SD_D0_PIN  40
 
 SDLogger& SDLogger::getInstance() {
     static SDLogger instance;
@@ -22,22 +18,28 @@ bool SDLogger::init(const char* logDir) {
         return true;
     }
 
-    // Set custom SD card pins for ESP32-S3
-    Serial.println("SDLogger: Initializing SD card...");
-
-    // Enable internal pull-ups on SD card pins (needed when camera not attached)
-    pinMode(SD_CLK_PIN, INPUT_PULLUP);
-    pinMode(SD_CMD_PIN, INPUT_PULLUP);
-    pinMode(SD_D0_PIN, INPUT_PULLUP);
-    delay(10);  // Let pull-ups stabilise
-
-    SD_MMC.setPins(SD_CLK_PIN, SD_CMD_PIN, SD_D0_PIN);
-
+#ifdef ESP32S3_CAM
+    // ESP32-S3 CAM: Set custom SD card pins (SDMMC 1-bit mode)
+    Serial.println("SDLogger: ESP32-S3 mode, setting SD pins 39,38,40");
+    SD_MMC.setPins(39, 38, 40);  // CLK, CMD, D0
     if (!SD_MMC.begin("/sdcard", true)) {  // 1-bit mode
-        Serial.println("SDLogger: SD_MMC.begin() FAILED - check SD card and pull-up resistors");
+        Serial.println("SDLogger: SD_MMC.begin() FAILED");
         return false;
     }
-    Serial.println("SDLogger: SD card initialized");
+    Serial.println("SDLogger: SD_MMC.begin() OK");
+#else
+    // Original ESP32-CAM: Use default SDMMC 4-bit mode pins
+    pinMode(14, PULLUP);
+    pinMode(15, PULLUP);
+    pinMode(2, PULLUP);
+    pinMode(4, PULLUP);
+    pinMode(12, PULLUP);
+    pinMode(13, PULLUP);
+    if (!SD_MMC.begin()) {
+        // Serial.println("SDLogger: Failed to initialize SD_MMC");
+        return false;
+    }
+#endif
 
     _logDir = String(logDir);
 
@@ -45,30 +47,28 @@ bool SDLogger::init(const char* logDir) {
     Preferences prefs;
     prefs.begin("sdlogger", false);  // read-write
     _bootCounter = prefs.getUInt("boot_count", 0);
-    _bootCounter++;
+    _bootCounter++;  // Increment for this boot
     prefs.putUInt("boot_count", _bootCounter);
     prefs.end();
 
     // Create mutex for thread safety
     _mutex = xSemaphoreCreateMutex();
     if (_mutex == nullptr) {
-        Serial.println("SDLogger: Failed to create mutex");
         return false;
     }
 
     // Create log directory
     if (!createLogDirectory()) {
-        Serial.println("SDLogger: Failed to create log directory");
         return false;
     }
 
     // Generate initial log file name
     _currentLogFile = generateLogFileName();
 
-    // Create semaphore used to signal that the writer task has exited
-    _writerExitSemaphore = xSemaphoreCreateBinary();
-    if (_writerExitSemaphore == nullptr) {
-        Serial.println("SDLogger: Failed to create writer exit semaphore");
+    // Create flush semaphore for blocking flush operations
+    _flushSemaphore = xSemaphoreCreateBinary();
+    if (_flushSemaphore == nullptr) {
+        Serial.println("SDLogger: Failed to create flush semaphore");
         return false;
     }
 
@@ -99,30 +99,47 @@ bool SDLogger::init(const char* logDir) {
 
     _initialized = true;
 
-    info("SDLogger initialized (async mode)");
+    // Log initialization
+    info("SDLogger initialized successfully (async mode)");
     infof("Boot count: %u", _bootCounter);
-    infof("Log file: %s", _currentLogFile.c_str());
+    infof("Log directory: %s", _logDir.c_str());
+    infof("Current log file: %s", _currentLogFile.c_str());
     infof("Queue size: %d entries", QUEUE_SIZE);
 
     // Clean up old log files on boot
-    if (_maxFiles > 0) {
-        cleanupOldLogs();
-    }
+    cleanupOldLogs();
 
     return true;
 }
 
-void SDLogger::trace(const char* message) { log(LOG_TRACE, message); }
-void SDLogger::debug(const char* message) { log(LOG_DEBUG, message); }
-void SDLogger::info(const char* message) { log(LOG_INFO, message); }
-void SDLogger::warn(const char* message) { log(LOG_WARN, message); }
-void SDLogger::error(const char* message) { log(LOG_ERROR, message); }
-void SDLogger::critical(const char* message) { log(LOG_CRITICAL, message); }
+void SDLogger::trace(const char* message) {
+    log(LOG_TRACE, message);
+}
+
+void SDLogger::debug(const char* message) {
+    log(LOG_DEBUG, message);
+}
+
+void SDLogger::info(const char* message) {
+    log(LOG_INFO, message);
+}
+
+void SDLogger::warn(const char* message) {
+    log(LOG_WARN, message);
+}
+
+void SDLogger::error(const char* message) {
+    log(LOG_ERROR, message);
+}
+
+void SDLogger::critical(const char* message) {
+    log(LOG_CRITICAL, message);
+}
 
 void SDLogger::tracef(const char* format, ...) {
     va_list args;
     va_start(args, format);
-    char buffer[512];
+    char buffer[2048];
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
     trace(buffer);
@@ -131,7 +148,7 @@ void SDLogger::tracef(const char* format, ...) {
 void SDLogger::debugf(const char* format, ...) {
     va_list args;
     va_start(args, format);
-    char buffer[512];
+    char buffer[2048];
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
     debug(buffer);
@@ -140,7 +157,7 @@ void SDLogger::debugf(const char* format, ...) {
 void SDLogger::infof(const char* format, ...) {
     va_list args;
     va_start(args, format);
-    char buffer[512];
+    char buffer[2048];
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
     info(buffer);
@@ -149,7 +166,7 @@ void SDLogger::infof(const char* format, ...) {
 void SDLogger::warnf(const char* format, ...) {
     va_list args;
     va_start(args, format);
-    char buffer[512];
+    char buffer[2048];
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
     warn(buffer);
@@ -158,7 +175,7 @@ void SDLogger::warnf(const char* format, ...) {
 void SDLogger::errorf(const char* format, ...) {
     va_list args;
     va_start(args, format);
-    char buffer[512];
+    char buffer[2048];
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
     error(buffer);
@@ -167,7 +184,7 @@ void SDLogger::errorf(const char* format, ...) {
 void SDLogger::criticalf(const char* format, ...) {
     va_list args;
     va_start(args, format);
-    char buffer[512];
+    char buffer[2048];
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
     critical(buffer);
@@ -185,9 +202,11 @@ void SDLogger::log(LogLevel level, const char* message) {
 
     // Enqueue for async write if queue is available
     if (_initialized && _logQueue != nullptr) {
+        // Critical and error logs are marked for immediate processing
         bool immediate = (level >= LOG_CRITICAL);
         enqueueLogEntry(level, message, immediate);
     } else if (_initialized) {
+        // Fallback to synchronous write if queue not available
         writeToFile(logEntry.c_str());
     }
 }
@@ -195,7 +214,7 @@ void SDLogger::log(LogLevel level, const char* message) {
 void SDLogger::logf(LogLevel level, const char* format, ...) {
     va_list args;
     va_start(args, format);
-    char buffer[512];
+    char buffer[2048];
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
     log(level, buffer);
@@ -205,7 +224,8 @@ void SDLogger::flush() {
     if (!_initialized) return;
 
     // If async queue is available, wait for it to drain
-    if (_logQueue != nullptr && _writerExitSemaphore != nullptr) {
+    if (_logQueue != nullptr && _flushSemaphore != nullptr) {
+        // Wait for queue to empty (with 5 second timeout)
         const int maxWaitMs = 5000;
         const int pollIntervalMs = 50;
         int waited = 0;
@@ -239,14 +259,15 @@ void SDLogger::rotateLogs() {
         }
         if (currentFile) currentFile.close();
         return true;
-    });
+        });
 }
 
 void SDLogger::writeToFile(const char* message) {
     if (!_initialized || !_fileLoggingEnabled) return;
 
     safeFileOperation([this, message]() {
-        File file = SD_MMC.open(_currentLogFile.c_str(), FILE_APPEND);
+        fs::FS& fs = SD_MMC;
+        File file = fs.open(_currentLogFile.c_str(), FILE_APPEND);
         if (file) {
             file.print(message);
             file.close();
@@ -256,13 +277,14 @@ void SDLogger::writeToFile(const char* message) {
             if (sizeCheck && sizeCheck.size() > _maxFileSize) {
                 sizeCheck.close();
                 rotateLogs();
-            } else if (sizeCheck) {
+            }
+            else if (sizeCheck) {
                 sizeCheck.close();
             }
             return true;
         }
         return false;
-    });
+        });
 }
 
 String SDLogger::formatLogEntry(LogLevel level, const char* message) {
@@ -273,13 +295,13 @@ String SDLogger::formatLogEntry(LogLevel level, const char* message) {
 
 String SDLogger::getLogLevelString(LogLevel level) {
     switch (level) {
-        case LOG_TRACE: return "TRACE";
-        case LOG_DEBUG: return "DEBUG";
-        case LOG_INFO: return "INFO";
-        case LOG_WARN: return "WARN";
-        case LOG_ERROR: return "ERROR";
-        case LOG_CRITICAL: return "CRIT";
-        default: return "UNKNOWN";
+    case LOG_TRACE: return "TRACE";
+    case LOG_DEBUG: return "DEBUG";
+    case LOG_INFO: return "INFO";
+    case LOG_WARN: return "WARN";
+    case LOG_ERROR: return "ERROR";
+    case LOG_CRITICAL: return "CRIT";
+    default: return "UNKNOWN";
     }
 }
 
@@ -295,8 +317,17 @@ String SDLogger::getCurrentTimestamp() {
 }
 
 String SDLogger::generateLogFileName() {
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+
+    struct tm* timeinfo = localtime(&tv.tv_sec);
     char buffer[64];
-    snprintf(buffer, sizeof(buffer), "%04u_kappa_%lu.log", _bootCounter, millis());
+    // Format: BBBB_catcam_YYYYMMDD_HHMMSS.log (where BBBB is boot counter)
+    snprintf(buffer, sizeof(buffer), "%04u_catcam_", _bootCounter);
+    char timeBuffer[32];
+    strftime(timeBuffer, sizeof(timeBuffer), "%Y%m%d_%H%M%S.log", timeinfo);
+    strcat(buffer, timeBuffer);
+
     return _logDir + "/" + String(buffer);
 }
 
@@ -309,8 +340,7 @@ bool SDLogger::createLogDirectory() {
 
 void SDLogger::cleanupOldLogs() {
     // Get sorted list of log files (oldest first due to naming convention)
-    // Uses internal variant — cleanupOldLogs is called from within mutex-held context
-    std::vector<String> logFiles = listLogFilesInternal();
+    std::vector<String> logFiles = listLogFiles();
 
     if ((int)logFiles.size() <= _maxFiles) {
         return;  // Nothing to clean up
@@ -318,7 +348,7 @@ void SDLogger::cleanupOldLogs() {
 
     int filesToDelete = logFiles.size() - _maxFiles;
     infof("Cleaning up old logs: %d files to delete (have %d, max %d)",
-          filesToDelete, (int)logFiles.size(), _maxFiles);
+          filesToDelete, logFiles.size(), _maxFiles);
 
     // Delete oldest files (they're at the start of the sorted list)
     for (int i = 0; i < filesToDelete; i++) {
@@ -336,9 +366,6 @@ String SDLogger::getRecentLogEntries(int maxLines) {
         return "{\"error\":\"Logger not initialized\"}";
     }
 
-    if (maxLines == 0) return String();
-    if (maxLines < 0) maxLines = 200;  // treat negative as "last 200 lines"
-
     String result = "";
     int lineCount = 0;
 
@@ -349,8 +376,30 @@ String SDLogger::getRecentLogEntries(int maxLines) {
             return false;
         }
 
-        // Use circular buffer for last N lines
-        String* lines = new String[maxLines];
+        // If maxLines is -1, read all lines directly into result
+        if (maxLines == -1) {
+            result = "[";
+            bool first = true;
+            while (file.available()) {
+                String line = file.readStringUntil('\n');
+                if (line.length() > 0) {
+                    if (!first) result += ",";
+                    first = false;
+
+                    // Escape quotes and backslashes in log line
+                    line.replace("\\", "\\\\");
+                    line.replace("\"", "\\\"");
+                    result += "\"" + line + "\"";
+                    lineCount++;
+                }
+            }
+            result += "]";
+            file.close();
+            return true;
+        }
+
+        // Otherwise use circular buffer for last N lines
+        String *lines = new String[maxLines];
         int currentLine = 0;
         int totalLines = 0;
 
@@ -400,9 +449,6 @@ void SDLogger::processRecentLogEntries(int maxLines, std::function<void(const St
         return;
     }
 
-    if (maxLines == 0) return;
-    if (maxLines < 0) maxLines = 200;  // treat negative as "last 200 lines"
-
     safeFileOperation([this, maxLines, &processor]() {
         File file = SD_MMC.open(_currentLogFile.c_str(), FILE_READ);
         if (!file) {
@@ -410,21 +456,41 @@ void SDLogger::processRecentLogEntries(int maxLines, std::function<void(const St
             return false;
         }
 
-        // For limited lines, count total first then skip to the last N
+        if (maxLines == -1) {
+            // Process all lines from start to end
+            while (file.available()) {
+                String line = file.readStringUntil('\n');
+                if (line.length() > 0) {
+                    // Escape quotes and backslashes in log line
+                    line.replace("\\", "\\\\");
+                    line.replace("\"", "\\\"");
+                    processor(line);
+                }
+            }
+            file.close();
+            return true;
+        }
+
+        // For limited lines, we need to read all lines to find the last N
+        // But we'll use a circular buffer approach that doesn't store line contents
+        // First pass: count total lines
         int totalLines = 0;
         while (file.available()) {
             file.readStringUntil('\n');
             totalLines++;
         }
 
+        // Calculate which lines to process
         int linesToSkip = (totalLines > maxLines) ? (totalLines - maxLines) : 0;
 
+        // Second pass: seek back to start and process the lines we want
         file.seek(0);
         int currentLine = 0;
 
         while (file.available()) {
             String line = file.readStringUntil('\n');
             if (currentLine >= linesToSkip && line.length() > 0) {
+                // Escape quotes and backslashes in log line
                 line.replace("\\", "\\\\");
                 line.replace("\"", "\\\"");
                 processor(line);
@@ -437,10 +503,149 @@ void SDLogger::processRecentLogEntries(int maxLines, std::function<void(const St
     });
 }
 
-std::vector<String> SDLogger::listLogFilesInternal() {
+bool SDLogger::safeFileOperation(std::function<bool()> operation) {
+    if (!_initialized || _mutex == nullptr) {
+        return false;
+    }
+
+    if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        bool result = operation();
+        xSemaphoreGive(_mutex);
+        return result;
+    }
+
+    return false;
+}
+
+// Async queue implementation
+
+bool SDLogger::enqueueLogEntry(LogLevel level, const char* message, bool immediate) {
+    if (_logQueue == nullptr) {
+        return false;
+    }
+
+    LogEntry entry;
+    entry.level = level;
+    entry.timestamp = millis();
+    entry.immediate = immediate;
+    strncpy(entry.message, message, sizeof(entry.message) - 1);
+    entry.message[sizeof(entry.message) - 1] = '\0';
+
+    // Non-blocking enqueue with short timeout
+    BaseType_t result = xQueueSend(_logQueue, &entry, pdMS_TO_TICKS(10));
+
+    if (result == pdTRUE) {
+        _totalEnqueued++;
+        return true;
+    } else {
+        // Queue full - drop newest message (preserves earlier diagnostic context)
+        _droppedCount++;
+
+        // Log warning to Serial every 100 drops
+        if (_droppedCount % 100 == 0) {
+            uint32_t now = millis();
+            if (now - _lastDropWarning > 1000) {  // Rate limit warnings
+                Serial.printf("SDLogger: Dropped %u log entries (queue full)\n", _droppedCount);
+                _lastDropWarning = now;
+            }
+        }
+        return false;
+    }
+}
+
+void SDLogger::processLogEntry(const LogEntry& entry) {
+    // Format the entry with stored timestamp info
+    String levelStr = getLogLevelString(entry.level);
+
+    // Use current time for formatting (entry.timestamp is when it was enqueued)
+    String logEntry = formatLogEntry(entry.level, entry.message);
+
+    // Write to file
+    writeToFile(logEntry.c_str());
+    _totalWritten++;
+}
+
+void SDLogger::writerTaskFunction(void* parameter) {
+    SDLogger* logger = static_cast<SDLogger*>(parameter);
+    LogEntry entry;
+
+    while (!logger->_shutdownRequested) {
+        // Wait for a log entry (with 100ms timeout to check shutdown flag)
+        if (xQueueReceive(logger->_logQueue, &entry, pdMS_TO_TICKS(100)) == pdTRUE) {
+            logger->processLogEntry(entry);
+
+            // Batch additional queued entries for efficiency
+            int batchCount = 1;
+            while (batchCount < SDLogger::BATCH_SIZE &&
+                   xQueueReceive(logger->_logQueue, &entry, 0) == pdTRUE) {
+                logger->processLogEntry(entry);
+                batchCount++;
+            }
+
+            // Yield to allow other tasks to run
+            taskYIELD();
+        }
+    }
+
+    // Drain remaining queue entries before shutdown
+    while (xQueueReceive(logger->_logQueue, &entry, 0) == pdTRUE) {
+        logger->processLogEntry(entry);
+    }
+
+    // Signal that we're done
+    if (logger->_flushSemaphore != nullptr) {
+        xSemaphoreGive(logger->_flushSemaphore);
+    }
+
+    vTaskDelete(NULL);
+}
+
+void SDLogger::shutdown() {
+    if (_writerTask == nullptr) {
+        return;
+    }
+
+    info("SDLogger: Shutting down async writer...");
+
+    // Signal shutdown
+    _shutdownRequested = true;
+
+    // Wait for task to finish draining and exit (5 second timeout)
+    if (_flushSemaphore != nullptr) {
+        if (xSemaphoreTake(_flushSemaphore, pdMS_TO_TICKS(5000)) != pdTRUE) {
+            Serial.println("SDLogger: Shutdown timeout, writer task may not have exited cleanly");
+        }
+    }
+
+    // Cleanup
+    if (_logQueue != nullptr) {
+        vQueueDelete(_logQueue);
+        _logQueue = nullptr;
+    }
+
+    if (_flushSemaphore != nullptr) {
+        vSemaphoreDelete(_flushSemaphore);
+        _flushSemaphore = nullptr;
+    }
+
+    _writerTask = nullptr;
+
+    Serial.printf("SDLogger: Shutdown complete. Total enqueued: %u, written: %u, dropped: %u\n",
+                  _totalEnqueued, _totalWritten, _droppedCount);
+}
+
+uint32_t SDLogger::getQueueDepth() const {
+    if (_logQueue == nullptr) {
+        return 0;
+    }
+    return uxQueueMessagesWaiting(_logQueue);
+}
+
+std::vector<String> SDLogger::listLogFiles() {
     std::vector<String> logFiles;
 
-    File dir = SD_MMC.open(_logDir);
+    // Open /logs directory directly (same pattern as listImages uses for /images)
+    File dir = SD_MMC.open("/logs");
     if (!dir || !dir.isDirectory()) {
         return logFiles;
     }
@@ -455,19 +660,10 @@ std::vector<String> SDLogger::listLogFilesInternal() {
     }
     dir.close();
 
-    // Sort alphabetically (which also sorts by boot number due to naming convention)
+    // Sort alphabetically (which also sorts by boot number and date due to naming convention)
     std::sort(logFiles.begin(), logFiles.end());
 
     return logFiles;
-}
-
-std::vector<String> SDLogger::listLogFiles() {
-    std::vector<String> result;
-    safeFileOperation([this, &result]() -> bool {
-        result = listLogFilesInternal();
-        return true;
-    });
-    return result;
 }
 
 void SDLogger::processLogFile(const String& filename, int maxLines, std::function<void(const String&)> processor) {
@@ -524,132 +720,4 @@ void SDLogger::processLogFile(const String& filename, int maxLines, std::functio
         file.close();
         return true;
     });
-}
-
-bool SDLogger::safeFileOperation(std::function<bool()> operation) {
-    if (!_initialized || _mutex == nullptr) {
-        return false;
-    }
-
-    if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-        bool result = operation();
-        xSemaphoreGive(_mutex);
-        return result;
-    }
-
-    return false;
-}
-
-bool SDLogger::enqueueLogEntry(LogLevel level, const char* message, bool immediate) {
-    if (_logQueue == nullptr) {
-        return false;
-    }
-
-    LogEntry entry;
-    entry.level = level;
-    entry.timestamp = millis();
-    entry.immediate = immediate;
-    strncpy(entry.message, message, sizeof(entry.message) - 1);
-    entry.message[sizeof(entry.message) - 1] = '\0';
-
-    // Non-blocking enqueue with short timeout
-    BaseType_t result = xQueueSend(_logQueue, &entry, pdMS_TO_TICKS(10));
-
-    if (result == pdTRUE) {
-        _totalEnqueued++;
-        return true;
-    } else {
-        // Queue full — drop newest message (preserves earlier diagnostic context)
-        _droppedCount++;
-
-        // Rate-limit "queue full" warnings to once per second
-        uint32_t now = millis();
-        if (now - _lastDropWarning > 1000) {
-            Serial.printf("SDLogger: Dropped %u log entries (queue full)\n", _droppedCount);
-            _lastDropWarning = now;
-        }
-        return false;
-    }
-}
-
-void SDLogger::processLogEntry(const LogEntry& entry) {
-    String logEntry = formatLogEntry(entry.level, entry.message);
-    writeToFile(logEntry.c_str());
-    _totalWritten++;
-}
-
-void SDLogger::writerTaskFunction(void* parameter) {
-    SDLogger* logger = static_cast<SDLogger*>(parameter);
-    LogEntry entry;
-
-    while (!logger->_shutdownRequested) {
-        // Wait for a log entry (with 100ms timeout to check shutdown flag)
-        if (xQueueReceive(logger->_logQueue, &entry, pdMS_TO_TICKS(100)) == pdTRUE) {
-            logger->processLogEntry(entry);
-
-            // Batch additional queued entries for efficiency
-            int batchCount = 1;
-            while (batchCount < SDLogger::BATCH_SIZE &&
-                   xQueueReceive(logger->_logQueue, &entry, 0) == pdTRUE) {
-                logger->processLogEntry(entry);
-                batchCount++;
-            }
-
-            // Yield to allow other tasks to run
-            taskYIELD();
-        }
-    }
-
-    // Drain remaining queue entries before shutdown
-    while (xQueueReceive(logger->_logQueue, &entry, 0) == pdTRUE) {
-        logger->processLogEntry(entry);
-    }
-
-    // Signal that we're done
-    if (logger->_writerExitSemaphore != nullptr) {
-        xSemaphoreGive(logger->_writerExitSemaphore);
-    }
-
-    vTaskDelete(NULL);
-}
-
-void SDLogger::shutdown() {
-    if (_writerTask == nullptr) {
-        return;
-    }
-
-    info("SDLogger: Shutting down async writer...");
-
-    // Signal shutdown
-    _shutdownRequested = true;
-
-    // Wait for task to finish draining and exit (5 second timeout)
-    if (_writerExitSemaphore != nullptr) {
-        if (xSemaphoreTake(_writerExitSemaphore, pdMS_TO_TICKS(5000)) != pdTRUE) {
-            Serial.println("SDLogger: Shutdown timeout, writer task may not have exited cleanly");
-        }
-    }
-
-    // Cleanup
-    if (_logQueue != nullptr) {
-        vQueueDelete(_logQueue);
-        _logQueue = nullptr;
-    }
-
-    if (_writerExitSemaphore != nullptr) {
-        vSemaphoreDelete(_writerExitSemaphore);
-        _writerExitSemaphore = nullptr;
-    }
-
-    _writerTask = nullptr;
-
-    Serial.printf("SDLogger: Shutdown complete. Total enqueued: %u, written: %u, dropped: %u\n",
-                  _totalEnqueued, _totalWritten, _droppedCount);
-}
-
-uint32_t SDLogger::getQueueDepth() const {
-    if (_logQueue == nullptr) {
-        return 0;
-    }
-    return (uint32_t)uxQueueMessagesWaiting(_logQueue);
 }
