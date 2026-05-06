@@ -4,7 +4,7 @@ ESP32 Bootstrap CLI Tool
 
 Creates a new ESP32-S3 project with standardized structure including:
 - PlatformIO configuration for ESP32-S3-N16R8
-- Core libraries (SDLogger, WifiConnect, OTAUpdate, OTABleService)
+- Core libraries (SDLogger, WifiConnect, OTAUpdate, BluetoothOTA, WifiBleService)
 - AWS CDK infrastructure for IoT Thing + certificates
 - Build and deployment scripts
 - OTA update support via sandboxsite
@@ -354,6 +354,19 @@ def create_project(project_name: str, options: dict):
             copy_directory(mqtt_ota_lib, embedded_dir / 'lib' / 'MqttOTA', replacements)
             print("  Copied: MqttOTA")
 
+    for opt_key, lib_name in [
+        ('input_manager', 'InputManager'),
+        ('led_controller', 'LedController'),
+        ('neopixel', 'NeoPixel'),
+        ('pcf8574_manager', 'PCF8574Manager'),
+    ]:
+        if options.get(opt_key):
+            print(f"\nCopying {lib_name} library...")
+            lib_dir = LIBRARIES_DIR / 'optional' / lib_name
+            if lib_dir.exists():
+                copy_directory(lib_dir, embedded_dir / 'lib' / lib_name, replacements)
+                print(f"  Copied: {lib_name}")
+
     # Copy certificates scripts if selected
     if options.get('certificates'):
         print("\nSetting up certificate management...")
@@ -442,6 +455,10 @@ It will be converted to PascalCase for AWS/CDK identifiers.
         'mqtt_service': False,
         'mqtt_ota': False,
         'certificates': False,
+        'input_manager': False,
+        'led_controller': False,
+        'neopixel': False,
+        'pcf8574_manager': False,
     }
 
     if not args.no_interactive:
@@ -484,6 +501,30 @@ It will be converted to PascalCase for AWS/CDK identifiers.
             style=custom_style
         ).ask()
 
+        options['input_manager'] = questionary.confirm(
+            "Include InputManager library (debounced GPIO input handling)?",
+            default=False,
+            style=custom_style
+        ).ask()
+
+        options['led_controller'] = questionary.confirm(
+            "Include LedController library (status LED with patterns)?",
+            default=False,
+            style=custom_style
+        ).ask()
+
+        options['neopixel'] = questionary.confirm(
+            "Include NeoPixel library (WS2812/SK6812 RGB LED control)?",
+            default=False,
+            style=custom_style
+        ).ask()
+
+        options['pcf8574_manager'] = questionary.confirm(
+            "Include PCF8574Manager library (I2C GPIO expander)?",
+            default=False,
+            style=custom_style
+        ).ask()
+
         # Auto-add dependencies
         selected_optional = [k for k, v in options.items() if v and k != 'certificates']
 
@@ -512,6 +553,10 @@ It will be converted to PascalCase for AWS/CDK identifiers.
         print(f"  - MqttService: {'Yes' if options['mqtt_service'] else 'No'}")
         print(f"  - MqttOTA: {'Yes' if options['mqtt_ota'] else 'No'}")
         print(f"  - Certificates: {'Yes' if options['certificates'] else 'No'}")
+        print(f"  - InputManager: {'Yes' if options['input_manager'] else 'No'}")
+        print(f"  - LedController: {'Yes' if options['led_controller'] else 'No'}")
+        print(f"  - NeoPixel: {'Yes' if options['neopixel'] else 'No'}")
+        print(f"  - PCF8574Manager: {'Yes' if options['pcf8574_manager'] else 'No'}")
         print()
 
         if not questionary.confirm("Create project?", default=True, style=custom_style).ask():

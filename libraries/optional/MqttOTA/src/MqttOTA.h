@@ -1,13 +1,12 @@
 #pragma once
 
 #include <Arduino.h>
+#include "../../CommandDispatcher/src/CommandDispatcher.h"
 
 // Forward declarations
 class OTAUpdate;
 class MqttService;
-class CommandDispatcher;
-struct CommandContext;
-class IResponseSender;
+class BluetoothOTA;
 
 /**
  * MqttOTA - Handles OTA firmware updates via MQTT commands
@@ -25,7 +24,7 @@ public:
 
     void setOTAUpdate(OTAUpdate* otaUpdate) { _otaUpdate = otaUpdate; }
     void setMqttService(MqttService* mqttService) { _mqttService = mqttService; }
-    void setStopBleOnOTA(bool stop) { _stopBleOnOTA = stop; }
+    void setBluetoothOTA(BluetoothOTA* bleOTA) { _bleOTA = bleOTA; }
 
     /**
      * Register OTA command handlers with the dispatcher
@@ -35,7 +34,7 @@ public:
 private:
     OTAUpdate* _otaUpdate;
     MqttService* _mqttService;
-    bool _stopBleOnOTA = false;
+    BluetoothOTA* _bleOTA;
 
     // URL chunking state (for long S3 signed URLs)
     static const int MAX_CHUNKS = 10;

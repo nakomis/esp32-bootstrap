@@ -5,6 +5,9 @@
 #include <map>
 #include <functional>
 
+// Forward declarations
+struct SystemState;
+
 /**
  * Interface for sending responses back to the command source.
  * Implementations handle transport-specific details (BLE chunking, MQTT, etc.)
@@ -35,9 +38,10 @@ public:
 struct CommandContext {
     const JsonDocument& request;      // Parsed JSON request
     IResponseSender* sender;          // Response sender for this request
+    SystemState* systemState;         // System state reference
 
-    CommandContext(const JsonDocument& req, IResponseSender* s)
-        : request(req), sender(s) {}
+    CommandContext(const JsonDocument& req, IResponseSender* s, SystemState* state)
+        : request(req), sender(s), systemState(state) {}
 };
 
 /**
@@ -49,6 +53,9 @@ using CommandHandler = std::function<bool(CommandContext& ctx)>;
 /**
  * Callback types for commands that need external functionality
  */
+using PhotoCaptureCallback = std::function<String()>;  // Returns new filename
+using TrainingModeCallback = std::function<void(bool)>;
+using CameraSettingCallback = std::function<void(const String&, int)>;
 using RebootCallback = std::function<void()>;
 
 /**
@@ -63,14 +70,21 @@ public:
     CommandDispatcher();
 
     /**
-     * Register a callback for the reboot command
+     * Set system state reference (required before processing commands)
      */
+    void setSystemState(SystemState* state) { _systemState = state; }
+
+    /**
+     * Register callbacks for commands that need external functionality
+     */
+    void setPhotoCaptureCallback(PhotoCaptureCallback cb) { _photoCaptureCallback = cb; }
+    void setTrainingModeCallback(TrainingModeCallback cb) { _trainingModeCallback = cb; }
+    void setCameraSettingCallback(CameraSettingCallback cb) { _cameraSettingCallback = cb; }
     void setRebootCallback(RebootCallback cb) { _rebootCallback = cb; }
 
     /**
-     * Register a custom command handler.
-     * Built-in handlers (ping, reboot) are registered in the constructor.
-     * Use this to add project-specific handlers.
+     * Register a custom command handler
+     * Built-in handlers are registered in the constructor
      */
     void registerHandler(const String& command, CommandHandler handler);
 
@@ -89,8 +103,12 @@ public:
 
 private:
     std::map<String, CommandHandler> _handlers;
+    SystemState* _systemState;
 
     // External callbacks
+    PhotoCaptureCallback _photoCaptureCallback;
+    TrainingModeCallback _trainingModeCallback;
+    CameraSettingCallback _cameraSettingCallback;
     RebootCallback _rebootCallback;
 
     // Commands that require chunking (BLE-only)
@@ -98,7 +116,13 @@ private:
 
     // Built-in command handlers
     bool handlePing(CommandContext& ctx);
+    bool handleGetStatus(CommandContext& ctx);
+    bool handleGetSettings(CommandContext& ctx);
+    bool handleGetCameraSettings(CommandContext& ctx);
+    bool handleSetSetting(CommandContext& ctx);
+    bool handleTakePhoto(CommandContext& ctx);
     bool handleReboot(CommandContext& ctx);
+    bool handleGetVersion(CommandContext& ctx);
 
     // Helper to send error response
     void sendError(IResponseSender* sender, const String& message);

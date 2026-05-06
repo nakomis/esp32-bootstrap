@@ -3,11 +3,11 @@
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
-#include <functional>
 #include "CommandDispatcher.h"
 
 // Forward declarations
 class CommandDispatcher;
+struct SystemState;
 
 /**
  * MQTT Response Sender - Implements IResponseSender for MQTT transport
@@ -32,12 +32,9 @@ private:
  * Subscribes to command topic and publishes responses.
  *
  * Topics:
- *   {topicPrefix}{thingName}/commands  - Subscribe for incoming commands
- *   {topicPrefix}{thingName}/responses - Publish command responses
- *   {topicPrefix}{thingName}/status    - Publish periodic status updates
- *
- * Call setTopicPrefix() before init() to customise the topic prefix.
- * Call setStatusCallback() to provide a function that returns the status JSON payload.
+ *   catcam/{thingName}/commands  - Subscribe for incoming commands
+ *   catcam/{thingName}/responses - Publish command responses
+ *   catcam/{thingName}/status    - Publish periodic status updates
  */
 class MqttService {
 public:
@@ -62,18 +59,9 @@ public:
     void setCommandDispatcher(CommandDispatcher* dispatcher) { _dispatcher = dispatcher; }
 
     /**
-     * Set the topic prefix used for all MQTT topics.
-     * Default is "device/". Must be called before init().
-     * Include the trailing slash, e.g. "myproject/" → "myproject/{thingName}/commands"
+     * Set system state reference for status publishing
      */
-    void setTopicPrefix(const char* prefix) { _topicPrefix = prefix; }
-
-    /**
-     * Set a callback that returns the status JSON payload string.
-     * Called periodically to publish device status.
-     * Return an empty string to skip publishing.
-     */
-    void setStatusCallback(std::function<String()> callback) { _statusCallback = callback; }
+    void setSystemState(SystemState* state) { _systemState = state; }
 
     /**
      * Call in main loop - handles reconnection and message processing
@@ -96,7 +84,7 @@ public:
     bool getConnectionState() const { return _connected; }
 
     /**
-     * Pause MQTT connection and free SSL resources.
+     * Pause MQTT connection and free SSL resources
      * Call this before memory-intensive operations like OTA updates.
      * The connection will automatically resume on next handle() call.
      */
@@ -109,9 +97,8 @@ private:
     PubSubClient* _client;
     MqttResponseSender* _responseSender;
     CommandDispatcher* _dispatcher;
-    std::function<String()> _statusCallback;
+    SystemState* _systemState;
 
-    String _topicPrefix;
     String _endpoint;
     String _thingName;
     String _commandTopic;

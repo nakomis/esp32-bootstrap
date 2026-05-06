@@ -1,6 +1,7 @@
 #include "AWSAuth.h"
 #include <mbedtls/md.h>
 #include <HTTPClient.h>
+#include "../../MqttService/src/MqttService.h"
 
 AWSAuth::AWSAuth(const char* region) : region(region) {
     credentials.isValid = false;
@@ -8,6 +9,7 @@ AWSAuth::AWSAuth(const char* region) : region(region) {
     caCert = nullptr;
     clientCert = nullptr;
     clientKey = nullptr;
+    _mqttService = nullptr;
 }
 
 bool AWSAuth::initialize(const char* awsCertCA, const char* awsCertCRT, const char* awsCertPrivate,
@@ -42,6 +44,7 @@ bool AWSAuth::initialize(const char* awsCertCA, const char* awsCertCRT, const ch
 bool AWSAuth::getCredentialsWithRoleAlias(const char* roleAlias) {
     // Use IoT Credentials Provider to get temporary AWS credentials
     // Endpoint format: https://<credentials-endpoint>/role-aliases/<role-alias>/credentials
+    // Note: caller is responsible for pausing/resuming MQTT around this call.
 
     WiFiClientSecure sslClient;
     sslClient.setCACert(caCert);
@@ -108,6 +111,20 @@ bool AWSAuth::getCredentialsWithRoleAlias(const char* roleAlias) {
 
     http.end();
     return false;
+}
+
+void AWSAuth::pauseMqtt() {
+    if (_mqttService) {
+        SDLogger::getInstance().infof("MQTT: Pausing connection...");
+        _mqttService->pause();
+    }
+}
+
+void AWSAuth::resumeMqtt() {
+    if (_mqttService) {
+        _mqttService->resume();
+        SDLogger::getInstance().infof("MQTT: Resumed, free heap: %d bytes", ESP.getFreeHeap());
+    }
 }
 
 bool AWSAuth::areCredentialsValid() const {

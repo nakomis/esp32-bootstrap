@@ -1,13 +1,14 @@
-#pragma once
+#ifndef CATCAM_SDLOGGER_H
+#define CATCAM_SDLOGGER_H
 
 #include <Arduino.h>
-#include <SD_MMC.h>
+#include <SD.h>
+#include <SPI.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <vector>
-#include <functional>
 
 enum LogLevel {
     LOG_TRACE = 0,
@@ -18,6 +19,7 @@ enum LogLevel {
     LOG_CRITICAL = 5
 };
 
+// Log entry structure for async queue
 struct LogEntry {
     LogLevel level;
     uint32_t timestamp;      // millis() when enqueued
@@ -28,10 +30,10 @@ struct LogEntry {
 class SDLogger {
 public:
     static SDLogger& getInstance();
-
-    // Initialise SD card and logger
+    
+    // Initialize SD card and logger
     bool init(const char* logDir = "/logs");
-
+    
     // Thread-safe logging methods
     void trace(const char* message);
     void debug(const char* message);
@@ -39,7 +41,7 @@ public:
     void warn(const char* message);
     void error(const char* message);
     void critical(const char* message);
-
+    
     // Formatted logging
     void tracef(const char* format, ...);
     void debugf(const char* format, ...);
@@ -47,11 +49,16 @@ public:
     void warnf(const char* format, ...);
     void errorf(const char* format, ...);
     void criticalf(const char* format, ...);
-
+    
     // Generic log method
     void log(LogLevel level, const char* message);
     void logf(LogLevel level, const char* format, ...);
-
+    
+    // Deterrent-specific logging
+    void logDeterrentActivation(const char* catName, float confidence, const float* allProbs);
+    void logDeterrentRejection(const char* catName, float confidence, const char* reason);
+    void logDetection(const char* catName, float confidence, int pictureNumber);
+    
     // File management
     void flush();
     void rotateLogs();
@@ -64,9 +71,11 @@ public:
     uint32_t getTotalWritten() const { return _totalWritten; }
     uint32_t getQueueDepth() const;
 
-    // Log retrieval — used for BLE/MQTT log viewing
+    // Log retrieval
     String getRecentLogEntries(int maxLines = 50);
     void processRecentLogEntries(int maxLines, std::function<void(const String&)> processor);
+
+    // Previous log files
     std::vector<String> listLogFiles();
     void processLogFile(const String& filename, int maxLines, std::function<void(const String&)> processor);
 
@@ -81,7 +90,7 @@ private:
     ~SDLogger() = default;
     SDLogger(const SDLogger&) = delete;
     SDLogger& operator=(const SDLogger&) = delete;
-
+    
     bool _initialized = false;
     String _logDir = "/logs";
     String _currentLogFile;
@@ -97,7 +106,7 @@ private:
     // Async queue members
     QueueHandle_t _logQueue = nullptr;
     TaskHandle_t _writerTask = nullptr;
-    SemaphoreHandle_t _writerExitSemaphore = nullptr;
+    SemaphoreHandle_t _flushSemaphore = nullptr;
     volatile bool _shutdownRequested = false;
     volatile uint32_t _droppedCount = 0;
     volatile uint32_t _totalEnqueued = 0;
@@ -123,14 +132,12 @@ private:
     String generateLogFileName();
     bool createLogDirectory();
     void cleanupOldLogs();
-
+    
     // Thread-safe wrapper for file operations
     bool safeFileOperation(std::function<bool()> operation);
-
-    // Internal (no mutex) directory scan — called from within mutex-held context
-    std::vector<String> listLogFilesInternal();
 };
 
+// Convenience macros for easier logging
 #define LOG_T(msg) SDLogger::getInstance().trace(msg)
 #define LOG_D(msg) SDLogger::getInstance().debug(msg)
 #define LOG_I(msg) SDLogger::getInstance().info(msg)
@@ -144,3 +151,5 @@ private:
 #define LOG_WF(fmt, ...) SDLogger::getInstance().warnf(fmt, ##__VA_ARGS__)
 #define LOG_EF(fmt, ...) SDLogger::getInstance().errorf(fmt, ##__VA_ARGS__)
 #define LOG_CF(fmt, ...) SDLogger::getInstance().criticalf(fmt, ##__VA_ARGS__)
+
+#endif

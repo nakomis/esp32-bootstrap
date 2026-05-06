@@ -1,14 +1,16 @@
 #include "MqttOTA.h"
 #include <ArduinoJson.h>
-#include <BLEDevice.h>
-#include "OTAUpdate.h"
-#include "MqttService.h"
-#include "CommandDispatcher.h"
+#include <esp_bt.h>
+#include "../../OTAUpdate/src/OTAUpdate.h"
+#include "../../MqttService/src/MqttService.h"
+#include "../../BluetoothOTA/src/BluetoothOTA.h"
+#include "../../SDLogger/src/SDLogger.h"
+#include "../../../include/version.h"
 
 MqttOTA::MqttOTA()
     : _otaUpdate(nullptr)
     , _mqttService(nullptr)
-    , _stopBleOnOTA(false)
+    , _bleOTA(nullptr)
     , _totalChunks(0)
     , _receivedChunks(0)
 {
@@ -25,7 +27,7 @@ void MqttOTA::registerCommands(CommandDispatcher* dispatcher) {
         return handleOtaCancel(ctx);
     });
 
-    Serial.printf("MqttOTA: OTA command handlers registered\n");
+    SDLogger::getInstance().infof("MqttOTA: OTA command handlers registered");
 }
 
 bool MqttOTA::handleOtaUpdate(CommandContext& ctx) {
@@ -43,8 +45,8 @@ bool MqttOTA::handleOtaUpdate(CommandContext& ctx) {
 
     String version = ctx.request["version"] | "";
 
-    Serial.printf("MqttOTA: OTA update requested via %s, URL length: %d\n",
-                  ctx.sender->getName(), url.length());
+    SDLogger::getInstance().infof("MqttOTA: OTA update requested via %s, URL length: %d",
+                                   ctx.sender->getName(), url.length());
 
     processOTAUpdate(ctx.sender, url, version);
     return true;
@@ -56,8 +58,8 @@ bool MqttOTA::handleUrlChunk(CommandContext& ctx) {
     String chunkData = ctx.request["chunk_data"] | "";
     String version = ctx.request["version"] | "";
 
-    Serial.printf("MqttOTA: URL chunk %d/%d (%d bytes)\n",
-                  chunkIndex + 1, totalChunks, chunkData.length());
+    SDLogger::getInstance().infof("MqttOTA: URL chunk %d/%d (%d bytes)",
+                                   chunkIndex + 1, totalChunks, chunkData.length());
 
     if (chunkIndex < 0 || chunkIndex >= MAX_CHUNKS || totalChunks > MAX_CHUNKS || totalChunks <= 0) {
         DynamicJsonDocument errorDoc(256);
@@ -89,7 +91,7 @@ bool MqttOTA::handleUrlChunk(CommandContext& ctx) {
             fullUrl += _urlChunks[i];
         }
 
-        Serial.printf("MqttOTA: URL reassembled (%d bytes)\n", fullUrl.length());
+        SDLogger::getInstance().infof("MqttOTA: URL reassembled (%d bytes)", fullUrl.length());
 
         // Reset chunk state
         _totalChunks = 0;
@@ -113,7 +115,7 @@ bool MqttOTA::handleUrlChunk(CommandContext& ctx) {
 bool MqttOTA::handleOtaCancel(CommandContext& ctx) {
     if (_otaUpdate && _otaUpdate->isUpdating()) {
         _otaUpdate->cancelUpdate();
-        Serial.printf("MqttOTA: Update cancelled via %s\n", ctx.sender->getName());
+        SDLogger::getInstance().infof("MqttOTA: Update cancelled via %s", ctx.sender->getName());
     }
 
     // Reset chunk state
@@ -157,27 +159,40 @@ void MqttOTA::processOTAUpdate(IResponseSender* sender, const String& url, const
     // Give time for the response to be sent
     delay(500);
 
-    Serial.printf("MqttOTA: Pausing MQTT to free memory for OTA download\n");
+    SDLogger::getInstance().infof("MqttOTA: Pausing MQTT to free memory for OTA download");
 
     // Pause MQTT to free ~40KB of SSL memory needed for firmware download
     if (_mqttService) {
         _mqttService->pause();
     }
 
-    // Stop BLE advertising to free additional memory
-    if (_stopBleOnOTA) {
-        Serial.printf("MqttOTA: Stopping BLE advertising\n");
+    // Fully shut down the BLE stack to recover ~50-80KB of internal SRAM.
+    // Stopping advertising alone only frees ~2KB, leaving the internal heap too
+    // fragmented for the SSL handshake (~40KB contiguous block needed).
+    // btStop() + esp_bt_mem_release() bypass the Arduino BLE wrapper (which hangs
+    // on deinit per esp32-snippets #1155) and go direct to ESP-IDF. The device
+    // always reboots after OTA so losing BLE here is fine.
+    if (_bleOTA) {
+        SDLogger::getInstance().infof("MqttOTA: Stopping BLE advertising");
         BLEDevice::stopAdvertising();
     }
 
-    delay(1000);
-    Serial.printf("MqttOTA: Free heap before download: %d bytes\n", ESP.getFreeHeap());
+    delay(500);  // Let any in-flight BLE packets flush
+
+    SDLogger::getInstance().infof("MqttOTA: Deinitialising BLE stack to free internal SRAM for SSL...");
+    btStop();
+    esp_bt_mem_release(ESP_BT_MODE_BLE);
+
+    delay(500);  // Let the BLE stack fully shut down
+
+    SDLogger::getInstance().infof("MqttOTA: Free heap before download: %d bytes", ESP.getFreeHeap());
+    SDLogger::getInstance().infof("MqttOTA: Largest free block: %d bytes", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
     // Download firmware to SD card - device will reboot on completion
     bool started = _otaUpdate->downloadToSD(url.c_str());
 
     if (!started) {
-        Serial.printf("MqttOTA: Failed to start OTA download\n");
+        SDLogger::getInstance().errorf("MqttOTA: Failed to start OTA download");
         // Device will likely reboot due to OTAUpdate error handling
     }
 
