@@ -16,9 +16,13 @@
 // Project libraries
 #include "SDLogger.h"
 #include "WifiConnect.h"
-#include "WifiBleService.h"
 #include "OTAUpdate.h"
-#include "OTABleService.h"
+#include "BluetoothOTA.h"
+// NOTE: WifiBleService is shipped in core/ but currently expects a richer
+// WifiConnect API (NVS-backed credentials, hasCredentials/getSSID/etc) that
+// the bundled WifiConnect does not provide. Re-enable once that's reconciled
+// (tracked under STAT/FLEET follow-up). For now WiFi credentials come from
+// secrets.h via WifiConnect::connect().
 
 // Project configuration
 #include "version.h"
@@ -30,8 +34,7 @@ OTAUpdate otaUpdate;
 
 // BLE server and services
 BLEServer* pServer = nullptr;
-WifiBleService wifiBleService;
-OTABleService otaBleService;
+BluetoothOTA bluetoothOTA;
 
 // Feature flags
 static bool sdCardReady = false;
@@ -85,15 +88,9 @@ void initBLE() {
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
 
-    // Initialize WiFi BLE service (provides BLE commands for WiFi config)
-    wifiBleService.setWifi(&wifi);
-    wifiBleService.init(pServer);
-
     // Initialize OTA BLE service (provides BLE commands for OTA updates)
-    otaBleService.setOTAUpdate(&otaUpdate);
-    otaBleService.setWifi(&wifi);
-    otaBleService.setVersionString(FIRMWARE_VERSION);
-    otaBleService.init(pServer);
+    bluetoothOTA.setOTAUpdate(&otaUpdate);
+    bluetoothOTA.initWithExistingServer(pServer);
 
     // Start advertising
     BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
@@ -108,30 +105,20 @@ void initBLE() {
 }
 
 void initWiFi() {
-    wifi.begin();
+    Serial.println("Connecting to WiFi (credentials from secrets.h)...");
+    if (sdCardReady) {
+        LOG_I("Connecting to WiFi (credentials from secrets.h)...");
+    }
 
-    // Try to connect with stored credentials
-    if (wifi.hasCredentials()) {
-        Serial.printf("Found stored WiFi credentials for '%s', attempting connection...\n", wifi.getSSID().c_str());
+    if (wifi.connect() == 0) {
+        Serial.printf("WiFi connected: %s\n", WiFi.localIP().toString().c_str());
         if (sdCardReady) {
-            LOG_IF("Connecting to WiFi '%s'...", wifi.getSSID().c_str());
-        }
-
-        if (wifi.connect() == 0) {
-            Serial.printf("WiFi connected: %s\n", WiFi.localIP().toString().c_str());
-            if (sdCardReady) {
-                LOG_IF("WiFi connected: %s", WiFi.localIP().toString().c_str());
-            }
-        } else {
-            Serial.println("WiFi connection failed, use BLE to configure");
-            if (sdCardReady) {
-                LOG_W("WiFi connection failed");
-            }
+            LOG_IF("WiFi connected: %s", WiFi.localIP().toString().c_str());
         }
     } else {
-        Serial.println("No stored WiFi credentials, use BLE to configure");
+        Serial.println("WiFi connection failed");
         if (sdCardReady) {
-            LOG_I("No stored WiFi credentials");
+            LOG_W("WiFi connection failed");
         }
     }
 }
@@ -159,8 +146,7 @@ void setup() {
 
 void loop() {
     // Handle BLE services (deferred command processing)
-    wifiBleService.handle();
-    otaBleService.handle();
+    bluetoothOTA.handle();
 
     // Handle BLE connection state changes
     if (deviceConnected && !oldDeviceConnected) {

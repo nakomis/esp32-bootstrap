@@ -256,6 +256,12 @@ def create_project(project_name: str, options: dict):
             copy_template(pio_template, embedded_dir, replacements)
             print(f"  Created: embedded/platformio.ini")
 
+        # extra_script.py (PIO pre-build hook to size against OTA0 not factory)
+        extra_script_template = embedded_templates / 'extra_script.py.template'
+        if extra_script_template.exists():
+            copy_template(extra_script_template, embedded_dir, replacements)
+            print(f"  Created: embedded/extra_script.py")
+
         # partitions.csv
         partitions_file = embedded_templates / 'partitions.csv'
         if partitions_file.exists():
