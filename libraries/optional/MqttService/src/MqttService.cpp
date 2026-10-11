@@ -68,13 +68,14 @@ void MqttService::messageCallback(char* topic, byte* payload, unsigned int lengt
 }
 
 bool MqttService::init(const char* endpoint, const char* caCert, const char* clientCert,
-                       const char* privateKey, const char* thingName) {
+                       const char* privateKey, const char* thingName, const char* project) {
     SDLogger::getInstance().infof("Initializing MQTT service...");
     SDLogger::getInstance().infof("  Endpoint: %s", endpoint);
     SDLogger::getInstance().infof("  Thing: %s", thingName);
 
     _endpoint = endpoint;
     _thingName = thingName;
+    _project = project;
     _caCert = caCert;
     _clientCert = clientCert;
     _privateKey = privateKey;
@@ -104,9 +105,9 @@ bool MqttService::init(const char* endpoint, const char* caCert, const char* cli
 }
 
 void MqttService::setupTopics() {
-    _commandTopic = "bootboots/" + _thingName + "/commands";
-    _responseTopic = "bootboots/" + _thingName + "/responses";
-    _statusTopic = "bootboots/" + _thingName + "/status";
+    _commandTopic = _project + "/" + _thingName + "/commands";
+    _responseTopic = _project + "/" + _thingName + "/responses";
+    _statusTopic = _project + "/" + _thingName + "/status";
 }
 
 bool MqttService::connect() {

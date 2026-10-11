@@ -32,9 +32,12 @@ private:
  * Subscribes to command topic and publishes responses.
  *
  * Topics:
- *   catcam/{thingName}/commands  - Subscribe for incoming commands
- *   catcam/{thingName}/responses - Publish command responses
- *   catcam/{thingName}/status    - Publish periodic status updates
+ *   {project}/{thingName}/commands  - Subscribe for incoming commands
+ *   {project}/{thingName}/responses - Publish command responses
+ *   {project}/{thingName}/status    - Publish periodic status updates
+ *
+ * {project} must match the Thing's `project` attribute and the IoT policy, so Fleet
+ * (nakomis-fleet) can reach the device. It defaults to "bootboots" for existing devices.
  */
 class MqttService {
 public:
@@ -48,10 +51,11 @@ public:
      * @param clientCert Device certificate
      * @param privateKey Device private key
      * @param thingName IoT Thing name (used for topics and client ID)
+     * @param project Topic prefix, the Thing's `project` attribute (defaults to "bootboots")
      * @return true if initialization succeeded
      */
     bool init(const char* endpoint, const char* caCert, const char* clientCert,
-              const char* privateKey, const char* thingName);
+              const char* privateKey, const char* thingName, const char* project = "bootboots");
 
     /**
      * Set the command dispatcher for processing incoming commands
@@ -101,6 +105,7 @@ private:
 
     String _endpoint;
     String _thingName;
+    String _project;
     String _commandTopic;
     String _responseTopic;
     String _statusTopic;

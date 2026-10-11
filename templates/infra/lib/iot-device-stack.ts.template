@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as iot from 'aws-cdk-lib/aws-iot';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import { ThingWithCert } from 'cdk-iot-core-certificates-v3';
 
@@ -29,15 +30,36 @@ export class IoTDeviceStack extends cdk.Stack {
         const thingName = `${projectName}Thing`;
         const firmwareBucketName = props.firmwareBucketName ?? `nakomis-firmware-${props.fleetEnv}`;
 
-        // TODO(FLEET-4): tag this Thing with a `project` attribute once cdk-iot-core-certificates-v3
-        // exposes attributePayload, so Fleet-wide tooling can group devices by project.
-
         // Create IoT Thing with certificate (saves cert/key to SSM automatically)
         const { thingArn, certId, certPem, privKey } = new ThingWithCert(this, 'Thing', {
             thingName: thingName,
             saveToParamStore: true,
             paramPrefix: projectName,
         });
+
+        // Fleet (nakomis-fleet) groups devices by the Thing's `project` attribute, which must match the
+        // MQTT topic prefix ({{ PROJECT_NAME }}/{thing}/commands|responses|status) and the IoT policy below.
+        // ThingWithCert doesn't expose attributePayload, so set the attributes after it creates the Thing.
+        const updateThing = {
+            service: 'IoT',
+            action: 'updateThing',
+            parameters: {
+                thingName,
+                attributePayload: {
+                    attributes: { project: '{{ PROJECT_NAME }}', deviceType: '{{ PROJECT_NAME }}', capabilities: 'ota' },
+                    merge: true,
+                },
+            },
+            physicalResourceId: cr.PhysicalResourceId.of(`${thingName}-attributes`),
+        };
+        const thingAttributes = new cr.AwsCustomResource(this, 'ThingAttributes', {
+            onCreate: updateThing,
+            onUpdate: updateThing,
+            policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
+                resources: [`arn:aws:iot:${this.region}:${this.account}:thing/${thingName}`],
+            }),
+        });
+        thingAttributes.node.addDependency(this.node.findChild('Thing'));
 
         // Create IAM role for IoT credentials provider
         const thingRole = new iam.Role(this, 'ThingRole', {
