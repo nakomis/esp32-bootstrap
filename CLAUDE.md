@@ -454,6 +454,10 @@ python esp32-bootstrap my-project --no-interactive
 
 ## Technical Notes
 
+### Always Use the Real Project Name
+
+Never run the bootstrap with a temporary name (e.g. `my-project-tmp`) intending to copy and rename later. The PascalCase project name is substituted into at least 7 files: `version.h`, `platformio.ini`, `generate_secrets.py`, `build_and_upload.py`, `factory_setup.sh`, `build_and_flash.sh`, and `main.cpp`. A temp name means a global find-and-replace pass across all of them — not worth it. Run the tool directly with the real project name, even if bootstrapping to `/tmp` first.
+
 ### SDLogger Usage
 The SDLogger library uses a singleton pattern. Correct usage:
 ```cpp
